@@ -1,0 +1,352 @@
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import {
+  Calendar,
+  Clock,
+  Repeat,
+  Tag,
+  Bell,
+  Trash2,
+  Edit3,
+} from 'lucide-react-native';
+import React, { useMemo } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useEvents } from '@/contexts/EventContext';
+import { useGroups } from '@/contexts/GroupContext';
+import { REMINDER_OPTIONS } from '@/constants/reminders';
+
+export default function EventDetailScreen() {
+  const router = useRouter();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { events, getCategoryById, deleteEvent } = useEvents();
+  const { getUserRoleInGroup } = useGroups();
+
+  const event = useMemo(() => {
+    return events.find((e) => e.id === id);
+  }, [events, id]);
+
+  const userRole = event?.groupId ? getUserRoleInGroup(event.groupId) : 'viewer';
+  const isGroupAdmin = userRole === 'admin';
+
+  if (!event) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Event not found</Text>
+      </View>
+    );
+  }
+
+  const category = getCategoryById(event.categoryId);
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  };
+
+  const formatTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  const getRepeatLabel = () => {
+    switch (event.repeatFrequency) {
+      case 'daily':
+        return 'Daily';
+      case 'weekly':
+        return 'Weekly';
+      case 'monthly':
+        return 'Monthly';
+      default:
+        return 'Does not repeat';
+    }
+  };
+
+  const handleDelete = () => {
+    Alert.alert(
+      'Delete Event',
+      'Are you sure you want to delete this event?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteEvent(event.id);
+            router.back();
+          },
+        },
+      ]
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <View style={[styles.header, { backgroundColor: category?.color || '#999' }]}>
+          <Text style={styles.eventTitle}>{event.title}</Text>
+          {event.description && (
+            <Text style={styles.eventDescription}>{event.description}</Text>
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.infoRow}>
+            <Calendar size={20} color="#007AFF" />
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>Start</Text>
+              <Text style={styles.infoValue}>
+                {formatDate(event.startDate)}
+                {!event.allDay && ` at ${formatTime(event.startDate)}`}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.infoRow}>
+            <Clock size={20} color="#007AFF" />
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>End</Text>
+              <Text style={styles.infoValue}>
+                {formatDate(event.endDate)}
+                {!event.allDay && ` at ${formatTime(event.endDate)}`}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {event.allDay && (
+          <View style={styles.section}>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>All Day Event</Text>
+            </View>
+          </View>
+        )}
+
+        <View style={styles.section}>
+          <View style={styles.infoRow}>
+            <Repeat size={20} color="#007AFF" />
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>Repeat</Text>
+              <Text style={styles.infoValue}>{getRepeatLabel()}</Text>
+              {event.repeatEndDate && (
+                <Text style={styles.infoSubValue}>
+                  Until {formatDate(event.repeatEndDate)}
+                </Text>
+              )}
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.infoRow}>
+            <Tag size={20} color="#007AFF" />
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>Category</Text>
+              <View style={styles.categoryBadge}>
+                <View
+                  style={[styles.categoryDot, { backgroundColor: category?.color || '#999' }]}
+                />
+                <Text style={styles.categoryName}>{category?.name || 'Uncategorized'}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {event.reminders.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.infoRow}>
+              <Bell size={20} color="#007AFF" />
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Reminders</Text>
+                {event.reminders.map((reminder) => {
+                  const option = REMINDER_OPTIONS.find((o) => o.minutes === reminder.minutes);
+                  return (
+                    <Text key={reminder.id} style={styles.reminderItem}>
+                      • {option?.label || `${reminder.minutes} minutes before`}
+                    </Text>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+        )}
+      </ScrollView>
+
+      {isGroupAdmin && (
+        <SafeAreaView style={styles.footer} edges={['bottom']}>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity 
+              style={styles.editButton} 
+              onPress={() => router.push(`/event/${id}/edit`)}
+            >
+              <Edit3 size={20} color="#007AFF" />
+              <Text style={styles.editButtonText}>Edit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
+              <Trash2 size={20} color="#FF3B30" />
+              <Text style={styles.deleteButtonText}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F5F5F7',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 100,
+  },
+  header: {
+    padding: 24,
+    paddingTop: 32,
+    paddingBottom: 32,
+  },
+  eventTitle: {
+    fontSize: 32,
+    fontWeight: '700' as const,
+    color: '#FFF',
+    marginBottom: 8,
+  },
+  eventDescription: {
+    fontSize: 17,
+    color: '#FFF',
+    opacity: 0.95,
+    lineHeight: 24,
+  },
+  section: {
+    backgroundColor: '#FFF',
+    marginTop: 1,
+    padding: 20,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  infoContent: {
+    flex: 1,
+  },
+  infoLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+  },
+  infoValue: {
+    fontSize: 17,
+    color: '#000',
+    fontWeight: '500' as const,
+  },
+  infoSubValue: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  badge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#E8F0FE',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  badgeText: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: '#007AFF',
+  },
+  categoryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  categoryDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  categoryName: {
+    fontSize: 17,
+    color: '#000',
+    fontWeight: '500' as const,
+  },
+  reminderItem: {
+    fontSize: 15,
+    color: '#000',
+    marginTop: 4,
+  },
+  footer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5E5',
+    padding: 20,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  editButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FFF',
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#007AFF',
+  },
+  editButtonText: {
+    fontSize: 17,
+    fontWeight: '600' as const,
+    color: '#007AFF',
+  },
+  deleteButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FFF',
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#FF3B30',
+  },
+  deleteButtonText: {
+    fontSize: 17,
+    fontWeight: '600' as const,
+    color: '#FF3B30',
+  },
+  errorText: {
+    fontSize: 18,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 100,
+  },
+});
