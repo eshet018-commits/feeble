@@ -44,6 +44,8 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const database = getDatabase(app);
 const auth = getAuth(app);
 
+console.log('[Firebase] Auth initialized with automatic persistence');
+
 let storage: FirebaseStorage | null;
 try {
   if (!firebaseConfig.storageBucket || firebaseConfig.storageBucket === 'undefined') {
