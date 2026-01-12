@@ -37,6 +37,8 @@ export default function EditEventScreen() {
   const [selectedReminders, setSelectedReminders] = useState<number[]>([]);
   const [locationAddress, setLocationAddress] = useState('');
   const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [locationSuggestions, setLocationSuggestions] = useState<{ display_name: string; lat: string; lon: string }[]>([]);
+  const [showLocationSuggestions, setShowLocationSuggestions] = useState(false);
   
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showStartTimePicker, setShowStartTimePicker] = useState(false);
@@ -47,6 +49,7 @@ export default function EditEventScreen() {
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [customCategoryColor, setCustomCategoryColor] = useState('#3B82F6');
   const [isGeocodingLocation, setIsGeocodingLocation] = useState(false);
+  const [locationSearchTimeout, setLocationSearchTimeout] = useState<number | null>(null);
 
   useEffect(() => {
     if (event) {
@@ -159,35 +162,66 @@ export default function EditEventScreen() {
     setShowCustomCategoryModal(false);
   };
 
-  const handleGeocodeLocation = async () => {
-    if (!locationAddress.trim()) {
+  const handleLocationSearch = async (query: string) => {
+    setLocationAddress(query);
+    
+    if (!event?.location) {
+      setLocationCoords(null);
+    }
+
+    if (locationSearchTimeout) {
+      clearTimeout(locationSearchTimeout);
+    }
+
+    if (!query.trim()) {
+      setLocationSuggestions([]);
+      setShowLocationSuggestions(false);
       setLocationCoords(null);
       return;
     }
 
-    setIsGeocodingLocation(true);
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locationAddress)}&limit=1`
-      );
-      const data = await response.json();
-      
-      if (data && data.length > 0) {
-        setLocationCoords({
-          latitude: parseFloat(data[0].lat),
-          longitude: parseFloat(data[0].lon),
-        });
-      } else {
-        Alert.alert('Location Not Found', 'Could not find the specified location. Please try a different address.');
-        setLocationCoords(null);
+    const timeout = setTimeout(async () => {
+      setIsGeocodingLocation(true);
+      try {
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`
+        );
+        const data = await response.json();
+        
+        if (data && data.length > 0) {
+          setLocationSuggestions(data);
+          setShowLocationSuggestions(true);
+        } else {
+          setLocationSuggestions([]);
+          setShowLocationSuggestions(false);
+        }
+      } catch (error) {
+        console.error('Location search error:', error);
+        setLocationSuggestions([]);
+        setShowLocationSuggestions(false);
+      } finally {
+        setIsGeocodingLocation(false);
       }
-    } catch (error) {
-      console.error('Geocoding error:', error);
-      Alert.alert('Error', 'Failed to geocode location. You can still save the event without updating the location.');
-      setLocationCoords(null);
-    } finally {
-      setIsGeocodingLocation(false);
-    }
+    }, 300);
+
+    setLocationSearchTimeout(timeout);
+  };
+
+  const handleSelectLocation = (suggestion: { display_name: string; lat: string; lon: string }) => {
+    setLocationAddress(suggestion.display_name);
+    setLocationCoords({
+      latitude: parseFloat(suggestion.lat),
+      longitude: parseFloat(suggestion.lon),
+    });
+    setShowLocationSuggestions(false);
+    setLocationSuggestions([]);
+  };
+
+  const handleClearLocation = () => {
+    setLocationAddress('');
+    setLocationCoords(null);
+    setLocationSuggestions([]);
+    setShowLocationSuggestions(false);
   };
 
   const formatDate = (date: Date) => {
@@ -373,21 +407,52 @@ export default function EditEventScreen() {
             <MapPin size={20} color="#007AFF" />
             <Text style={styles.label}>Location (Optional)</Text>
           </View>
-          <TextInput
-            style={styles.locationInput}
-            placeholder="Enter address or place name"
-            placeholderTextColor="#999"
-            value={locationAddress}
-            onChangeText={setLocationAddress}
-            onBlur={handleGeocodeLocation}
-          />
+          <View>
+            <TextInput
+              style={styles.locationInput}
+              placeholder="Search for a location..."
+              placeholderTextColor="#999"
+              value={locationAddress}
+              onChangeText={handleLocationSearch}
+              onFocus={() => {
+                if (locationSuggestions.length > 0) {
+                  setShowLocationSuggestions(true);
+                }
+              }}
+            />
+            {showLocationSuggestions && locationSuggestions.length > 0 && (
+              <View style={styles.suggestionsContainer}>
+                <ScrollView 
+                  style={styles.suggestionsList}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                >
+                  {locationSuggestions.map((suggestion, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={styles.suggestionItem}
+                      onPress={() => handleSelectLocation(suggestion)}
+                    >
+                      <MapPin size={16} color="#666" />
+                      <Text style={styles.suggestionText} numberOfLines={2}>
+                        {suggestion.display_name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+          </View>
           {isGeocodingLocation && (
-            <Text style={styles.geocodingText}>Finding location...</Text>
+            <Text style={styles.geocodingText}>Searching...</Text>
           )}
           {locationCoords && (
             <View style={styles.locationConfirm}>
               <MapPin size={14} color="#10B981" />
-              <Text style={styles.locationConfirmText}>Location verified</Text>
+              <Text style={styles.locationConfirmText}>Location selected</Text>
+              <TouchableOpacity onPress={handleClearLocation} style={styles.clearLocationButton}>
+                <Text style={styles.clearLocationText}>Clear</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -929,5 +994,46 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#10B981',
     fontWeight: '500' as const,
+    flex: 1,
+  },
+  clearLocationButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  clearLocationText: {
+    fontSize: 13,
+    color: '#007AFF',
+    fontWeight: '600' as const,
+  },
+  suggestionsContainer: {
+    position: 'absolute',
+    top: 48,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+    maxHeight: 200,
+    zIndex: 1000,
+  },
+  suggestionsList: {
+    maxHeight: 200,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  suggestionText: {
+    fontSize: 14,
+    color: '#000',
+    flex: 1,
   },
 });
