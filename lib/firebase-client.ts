@@ -74,6 +74,7 @@ export const firebaseClient = {
     repeatFrequency: string;
     repeatEndDate?: string;
     reminders: { id: string; minutes: number; enabled: boolean }[];
+    location?: { address: string; latitude: number; longitude: number };
   }) {
     const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const now = new Date().toISOString();
@@ -101,6 +102,10 @@ export const firebaseClient = {
       event.repeatEndDate = eventData.repeatEndDate;
     }
 
+    if (eventData.location) {
+      event.location = eventData.location;
+    }
+
     await set(ref(database, `events/${eventId}`), event);
     return { id: eventId, success: true };
   },
@@ -118,6 +123,7 @@ export const firebaseClient = {
     if (updates.categoryId) updateData.categoryId = updates.categoryId;
     if (updates.repeatFrequency) updateData.repeatFrequency = updates.repeatFrequency;
     if (updates.repeatEndDate !== undefined) updateData.repeatEndDate = updates.repeatEndDate;
+    if (updates.location !== undefined) updateData.location = updates.location;
 
     await update(ref(database, `events/${eventId}`), updateData);
     

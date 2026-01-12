@@ -69,6 +69,7 @@ export const [EventProvider, useEvents] = createContextHook(() => {
         repeatFrequency: event.repeatFrequency,
         repeatEndDate: event.repeatEndDate,
         reminders: event.reminders,
+        location: event.location,
       });
       
       console.log('Event created successfully:', result.id);
