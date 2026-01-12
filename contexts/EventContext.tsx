@@ -157,6 +157,18 @@ export const [EventProvider, useEvents] = createContextHook(() => {
     return categories.find(c => c.id === id);
   }, [categories]);
 
+  const addCategory = useCallback(async (category: Category) => {
+    try {
+      const newCategories = [...categories, category];
+      setCategories(newCategories);
+      await AsyncStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(newCategories));
+      return category;
+    } catch (error) {
+      console.error('Failed to add category:', error);
+      throw error;
+    }
+  }, [categories]);
+
   return {
     events,
     categories,
@@ -167,6 +179,7 @@ export const [EventProvider, useEvents] = createContextHook(() => {
     expandRecurringEvents,
     getCategoryById,
     getEventsByGroupId,
+    addCategory,
   };
 });
 

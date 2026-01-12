@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Calendar, Clock, Repeat, Tag, Bell } from 'lucide-react-native';
+import { Calendar, Clock, Repeat, Tag, Bell, Plus } from 'lucide-react-native';
 import React, { useState } from 'react';
 import {
   View,
@@ -20,7 +20,7 @@ import { REMINDER_OPTIONS } from '@/constants/reminders';
 export default function CreateEventScreen() {
   const router = useRouter();
   const { id: groupId } = useLocalSearchParams<{ id?: string }>();
-  const { addEvent, categories } = useEvents();
+  const { addEvent, categories, addCategory } = useEvents();
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -37,12 +37,21 @@ export default function CreateEventScreen() {
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [showEndTimePicker, setShowEndTimePicker] = useState(false);
   const [showRepeatEndDatePicker, setShowRepeatEndDatePicker] = useState(false);
+  const [showCustomCategoryModal, setShowCustomCategoryModal] = useState(false);
+  const [customCategoryName, setCustomCategoryName] = useState('');
+  const [customCategoryColor, setCustomCategoryColor] = useState('#3B82F6');
 
   const repeatOptions: { label: string; value: RepeatFrequency }[] = [
     { label: 'Never', value: 'none' },
     { label: 'Daily', value: 'daily' },
     { label: 'Weekly', value: 'weekly' },
     { label: 'Monthly', value: 'monthly' },
+  ];
+
+  const colorOptions = [
+    '#3B82F6', '#8B5CF6', '#EC4899', '#10B981',
+    '#F59E0B', '#EF4444', '#06B6D4', '#6366F1',
+    '#F97316', '#84CC16', '#14B8A6', '#A855F7',
   ];
 
   const handleCreate = async () => {
@@ -88,6 +97,24 @@ export default function CreateEventScreen() {
     } else {
       setSelectedReminders([...selectedReminders, minutes].sort((a, b) => a - b));
     }
+  };
+
+  const handleCreateCustomCategory = async () => {
+    if (!customCategoryName.trim()) {
+      Alert.alert('Error', 'Please enter a category name');
+      return;
+    }
+
+    const newCategory = {
+      id: `custom-${Date.now()}`,
+      name: customCategoryName.trim(),
+      color: customCategoryColor,
+    };
+
+    await addCategory(newCategory);
+    setCategoryId(newCategory.id);
+    setCustomCategoryName('');
+    setShowCustomCategoryModal(false);
   };
 
   const formatDate = (date: Date) => {
@@ -258,6 +285,13 @@ export default function CreateEventScreen() {
                 </Text>
               </TouchableOpacity>
             ))}
+            <TouchableOpacity
+              style={styles.addCategoryButton}
+              onPress={() => setShowCustomCategoryModal(true)}
+            >
+              <Plus size={16} color="#007AFF" />
+              <Text style={styles.addCategoryText}>Custom</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -398,6 +432,57 @@ export default function CreateEventScreen() {
             }}
             textColor="#000"
           />
+        </View>
+      )}
+
+      {showCustomCategoryModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Create Custom Category</Text>
+            <TextInput
+              style={styles.categoryNameInput}
+              placeholder="Category name"
+              placeholderTextColor="#999"
+              value={customCategoryName}
+              onChangeText={setCustomCategoryName}
+              autoFocus
+            />
+            <Text style={styles.colorLabel}>Select Color</Text>
+            <View style={styles.colorGrid}>
+              {colorOptions.map((color) => (
+                <TouchableOpacity
+                  key={color}
+                  style={[
+                    styles.colorOption,
+                    { backgroundColor: color },
+                    customCategoryColor === color && styles.colorOptionSelected,
+                  ]}
+                  onPress={() => setCustomCategoryColor(color)}
+                />
+              ))}
+            </View>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => {
+                  setShowCustomCategoryModal(false);
+                  setCustomCategoryName('');
+                }}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalCreateButton,
+                  !customCategoryName.trim() && styles.modalCreateButtonDisabled,
+                ]}
+                onPress={handleCreateCustomCategory}
+                disabled={!customCategoryName.trim()}
+              >
+                <Text style={styles.modalCreateText}>Create</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       )}
     </View>
@@ -612,5 +697,109 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600' as const,
     color: '#007AFF',
+  },
+  addCategoryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F0F0',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    gap: 6,
+    borderWidth: 2,
+    borderColor: '#007AFF',
+    borderStyle: 'dashed',
+  },
+  addCategoryText: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: '#007AFF',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700' as const,
+    color: '#000',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  categoryNameInput: {
+    backgroundColor: '#F0F0F0',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    fontSize: 16,
+    color: '#000',
+    marginBottom: 20,
+  },
+  colorLabel: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: '#666',
+    marginBottom: 12,
+  },
+  colorGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 24,
+  },
+  colorOption: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 3,
+    borderColor: 'transparent',
+  },
+  colorOptionSelected: {
+    borderColor: '#000',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    backgroundColor: '#F0F0F0',
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: '#666',
+  },
+  modalCreateButton: {
+    flex: 1,
+    backgroundColor: '#007AFF',
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalCreateButtonDisabled: {
+    backgroundColor: '#CCC',
+  },
+  modalCreateText: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: '#FFF',
   },
 });
