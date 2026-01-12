@@ -7,6 +7,7 @@ import {
   Bell,
   Trash2,
   Edit3,
+  MapPin,
 } from 'lucide-react-native';
 import React, { useMemo } from 'react';
 import {
@@ -18,6 +19,7 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { useEvents } from '@/contexts/EventContext';
 import { useGroups } from '@/contexts/GroupContext';
 import { REMINDER_OPTIONS } from '@/constants/reminders';
@@ -181,6 +183,43 @@ export default function EventDetailScreen() {
                   );
                 })}
               </View>
+            </View>
+          </View>
+        )}
+
+        {event.location && (
+          <View style={styles.section}>
+            <View style={styles.infoRow}>
+              <MapPin size={20} color="#007AFF" />
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Location</Text>
+                <Text style={styles.infoValue}>{event.location.address}</Text>
+              </View>
+            </View>
+            <View style={styles.mapContainer}>
+              <MapView
+                style={styles.map}
+                provider={PROVIDER_DEFAULT}
+                initialRegion={{
+                  latitude: event.location.latitude,
+                  longitude: event.location.longitude,
+                  latitudeDelta: 0.01,
+                  longitudeDelta: 0.01,
+                }}
+                scrollEnabled={false}
+                zoomEnabled={false}
+                pitchEnabled={false}
+                rotateEnabled={false}
+              >
+                <Marker
+                  coordinate={{
+                    latitude: event.location.latitude,
+                    longitude: event.location.longitude,
+                  }}
+                  title={event.title}
+                  description={event.location.address}
+                />
+              </MapView>
             </View>
           </View>
         )}
@@ -348,5 +387,16 @@ const styles = StyleSheet.create({
     color: '#666',
     textAlign: 'center',
     marginTop: 100,
+  },
+  mapContainer: {
+    marginTop: 12,
+    height: 200,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#F0F0F0',
+  },
+  map: {
+    width: '100%',
+    height: '100%',
   },
 });

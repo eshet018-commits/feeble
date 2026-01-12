@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Calendar, Clock, Repeat, Tag, Bell, Plus } from 'lucide-react-native';
+import { Calendar, Clock, Repeat, Tag, Bell, Plus, MapPin } from 'lucide-react-native';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useEvents } from '@/contexts/EventContext';
-import { RepeatFrequency, EventReminder } from '@/types/event';
+import { RepeatFrequency, EventReminder, EventLocation } from '@/types/event';
 import { REMINDER_OPTIONS } from '@/constants/reminders';
 
 export default function EditEventScreen() {
@@ -35,6 +35,8 @@ export default function EditEventScreen() {
   const [repeatFrequency, setRepeatFrequency] = useState<RepeatFrequency>('none');
   const [repeatEndDate, setRepeatEndDate] = useState<Date | undefined>(undefined);
   const [selectedReminders, setSelectedReminders] = useState<number[]>([]);
+  const [locationAddress, setLocationAddress] = useState('');
+  const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showStartTimePicker, setShowStartTimePicker] = useState(false);
@@ -44,6 +46,7 @@ export default function EditEventScreen() {
   const [showCustomCategoryModal, setShowCustomCategoryModal] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [customCategoryColor, setCustomCategoryColor] = useState('#3B82F6');
+  const [isGeocodingLocation, setIsGeocodingLocation] = useState(false);
 
   useEffect(() => {
     if (event) {
@@ -56,6 +59,13 @@ export default function EditEventScreen() {
       setRepeatFrequency(event.repeatFrequency);
       setRepeatEndDate(event.repeatEndDate ? new Date(event.repeatEndDate) : undefined);
       setSelectedReminders(event.reminders.map(r => r.minutes));
+      if (event.location) {
+        setLocationAddress(event.location.address);
+        setLocationCoords({
+          latitude: event.location.latitude,
+          longitude: event.location.longitude,
+        });
+      }
     }
   }, [event]);
 
@@ -93,6 +103,15 @@ export default function EditEventScreen() {
         enabled: true,
       }));
 
+      let location: EventLocation | undefined;
+      if (locationAddress.trim() && locationCoords) {
+        location = {
+          address: locationAddress.trim(),
+          latitude: locationCoords.latitude,
+          longitude: locationCoords.longitude,
+        };
+      }
+
       await updateEvent(event.id, {
         title: title.trim(),
         description: description.trim() || undefined,
@@ -103,6 +122,7 @@ export default function EditEventScreen() {
         repeatFrequency,
         repeatEndDate: repeatEndDate?.toISOString(),
         reminders,
+        location,
       });
 
       Alert.alert('Success', 'Event updated successfully', [
@@ -137,6 +157,37 @@ export default function EditEventScreen() {
     setCategoryId(newCategory.id);
     setCustomCategoryName('');
     setShowCustomCategoryModal(false);
+  };
+
+  const handleGeocodeLocation = async () => {
+    if (!locationAddress.trim()) {
+      setLocationCoords(null);
+      return;
+    }
+
+    setIsGeocodingLocation(true);
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locationAddress)}&limit=1`
+      );
+      const data = await response.json();
+      
+      if (data && data.length > 0) {
+        setLocationCoords({
+          latitude: parseFloat(data[0].lat),
+          longitude: parseFloat(data[0].lon),
+        });
+      } else {
+        Alert.alert('Location Not Found', 'Could not find the specified location. Please try a different address.');
+        setLocationCoords(null);
+      }
+    } catch (error) {
+      console.error('Geocoding error:', error);
+      Alert.alert('Error', 'Failed to geocode location. You can still save the event without updating the location.');
+      setLocationCoords(null);
+    } finally {
+      setIsGeocodingLocation(false);
+    }
   };
 
   const formatDate = (date: Date) => {
@@ -315,6 +366,30 @@ export default function EditEventScreen() {
               <Text style={styles.addCategoryText}>Custom</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.row}>
+            <MapPin size={20} color="#007AFF" />
+            <Text style={styles.label}>Location (Optional)</Text>
+          </View>
+          <TextInput
+            style={styles.locationInput}
+            placeholder="Enter address or place name"
+            placeholderTextColor="#999"
+            value={locationAddress}
+            onChangeText={setLocationAddress}
+            onBlur={handleGeocodeLocation}
+          />
+          {isGeocodingLocation && (
+            <Text style={styles.geocodingText}>Finding location...</Text>
+          )}
+          {locationCoords && (
+            <View style={styles.locationConfirm}>
+              <MapPin size={14} color="#10B981" />
+              <Text style={styles.locationConfirmText}>Location verified</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.section}>
@@ -829,5 +904,30 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600' as const,
     color: '#FFF',
+  },
+  locationInput: {
+    backgroundColor: '#F0F0F0',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    fontSize: 16,
+    color: '#000',
+  },
+  geocodingText: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 8,
+    fontStyle: 'italic' as const,
+  },
+  locationConfirm: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  locationConfirmText: {
+    fontSize: 14,
+    color: '#10B981',
+    fontWeight: '500' as const,
   },
 });

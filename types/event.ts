@@ -44,6 +44,12 @@ export interface EventReminder {
   enabled: boolean;
 }
 
+export interface EventLocation {
+  address: string;
+  latitude: number;
+  longitude: number;
+}
+
 export interface Event {
   id: string;
   groupId: string;
@@ -57,6 +63,7 @@ export interface Event {
   repeatEndDate?: string;
   attachments: EventAttachment[];
   reminders: EventReminder[];
+  location?: EventLocation;
   createdAt: string;
   updatedAt: string;
 }
