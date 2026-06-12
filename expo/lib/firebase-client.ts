@@ -1,6 +1,14 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, set, get, update, remove, query, orderByChild, equalTo, onValue, off } from 'firebase/database';
-import { getAuth } from 'firebase/auth';
+import { getAuth, initializeAuth, inMemoryPersistence, setPersistence, Auth } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// getReactNativePersistence is available from @firebase/auth's React Native entry
+// point at runtime (via Metro's 'react-native' condition), but not in the main types.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { getReactNativePersistence } = require('@firebase/auth') as {
+  getReactNativePersistence: (storage: typeof AsyncStorage) => Parameters<typeof setPersistence>[1];
+};
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage } from 'firebase/storage';
 import { Event } from '@/types/event';
 
@@ -42,9 +50,29 @@ if (missingFields.length > 0) {
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const database = getDatabase(app);
-const auth = getAuth(app);
 
-console.log('[Firebase] Auth initialized with automatic persistence');
+let auth: Auth;
+try {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  });
+  console.log('[Firebase] Auth initialized with React Native persistence (AsyncStorage)');
+} catch (e: any) {
+  if (e.code === 'auth/already-initialized') {
+    auth = getAuth(app);
+    console.log('[Firebase] Auth already initialized, using existing instance');
+  } else {
+    throw e;
+  }
+}
+
+async function setAuthPersistence(rememberMe: boolean): Promise<void> {
+  if (rememberMe) {
+    await setPersistence(auth, getReactNativePersistence(AsyncStorage));
+  } else {
+    await setPersistence(auth, inMemoryPersistence);
+  }
+}
 
 let storage: FirebaseStorage | null;
 try {
@@ -62,7 +90,7 @@ try {
 
 console.log('[Firebase] Client initialized successfully');
 
-export { auth, storage };
+export { auth, storage, setAuthPersistence };
 
 export const firebaseClient = {
   async createEvent(eventData: {

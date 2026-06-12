@@ -13,13 +13,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { auth } from '@/lib/firebase-client';
+import { auth, setAuthPersistence } from '@/lib/firebase-client';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
   sendPasswordResetEmail
 } from 'firebase/auth';
-import { LogIn, UserPlus, Mail, Lock } from 'lucide-react-native';
+import { LogIn, UserPlus, Mail, Lock, Check } from 'lucide-react-native';
 
 export default function AuthScreen() {
   const router = useRouter();
@@ -28,6 +28,7 @@ export default function AuthScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
 
   const handleForgotPassword = async () => {
     if (!email) {
@@ -85,6 +86,8 @@ export default function AuthScreen() {
     setIsLoading(true);
 
     try {
+      await setAuthPersistence(rememberMe);
+
       if (isLogin) {
         console.log('[Auth] Signing in...');
         await signInWithEmailAndPassword(auth, email, password);
@@ -211,13 +214,27 @@ export default function AuthScreen() {
             )}
 
             {isLogin && (
-              <TouchableOpacity
-                onPress={handleForgotPassword}
-                disabled={isLoading}
-                style={styles.forgotPasswordContainer}
-              >
-                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity
+                  onPress={() => setRememberMe(!rememberMe)}
+                  disabled={isLoading}
+                  style={styles.rememberMeContainer}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
+                    {rememberMe && <Check size={14} color="#FFFFFF" strokeWidth={3} />}
+                  </View>
+                  <Text style={styles.rememberMeText}>Remember Me</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={handleForgotPassword}
+                  disabled={isLoading}
+                  style={styles.forgotPasswordContainer}
+                >
+                  <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+                </TouchableOpacity>
+              </>
             )}
 
             <TouchableOpacity
@@ -359,6 +376,30 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#007AFF',
     fontWeight: '600',
+  },
+  rememberMeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#C7C7CC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  checkboxChecked: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  rememberMeText: {
+    fontSize: 15,
+    color: '#000000',
+    fontWeight: '500',
   },
   forgotPasswordContainer: {
     alignItems: 'flex-end',
