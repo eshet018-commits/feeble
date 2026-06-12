@@ -1,5 +1,5 @@
 import { useRouter, Redirect } from 'expo-router';
-import { Users, Plus, ChevronRight, UserPlus, User } from 'lucide-react-native';
+import { Users, Plus, ChevronRight, UserPlus, User, HelpCircle } from 'lucide-react-native';
 import React from 'react';
 import {
   View,
@@ -46,14 +46,23 @@ export default function GroupsListScreen() {
               {userGroups.length} {userGroups.length === 1 ? 'group' : 'groups'}
             </Text>
           </View>
-          <TouchableOpacity
-            ref={registerView('profile')}
-            style={styles.settingsButton}
-            onPress={() => router.push('/profile')}
-            activeOpacity={0.7}
-          >
-            <User size={24} color="#007AFF" />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.settingsButton}
+              onPress={() => router.push('/help')}
+              activeOpacity={0.7}
+            >
+              <HelpCircle size={22} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              ref={registerView('profile')}
+              style={styles.settingsButton}
+              onPress={() => router.push('/profile')}
+              activeOpacity={0.7}
+            >
+              <User size={24} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
         </View>
       </SafeAreaView>
 
@@ -177,6 +186,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666',
     marginTop: 2,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 10,
   },
   settingsButton: {
     width: 40,
