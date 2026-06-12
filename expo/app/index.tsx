@@ -12,12 +12,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGroups } from '@/contexts/GroupContext';
 import { useUser } from '@/contexts/UserContext';
+import { useOnboarding } from '@/contexts/OnboardingContext';
 import OnboardingOverlay from '@/components/OnboardingOverlay';
 
 export default function GroupsListScreen() {
   const router = useRouter();
   const { isAuthenticated, isLoading: userLoading } = useUser();
   const { getUserGroups, isGroupAdmin, getMembersByGroupId } = useGroups();
+  const { registerView } = useOnboarding();
 
   const userGroups = getUserGroups();
 
@@ -45,6 +47,7 @@ export default function GroupsListScreen() {
             </Text>
           </View>
           <TouchableOpacity
+            ref={registerView('profile')}
             style={styles.settingsButton}
             onPress={() => router.push('/profile')}
             activeOpacity={0.7}
@@ -121,6 +124,7 @@ export default function GroupsListScreen() {
 
       <View style={styles.fabContainer}>
         <TouchableOpacity
+          ref={registerView('join-group')}
           style={styles.fabSecondary}
           onPress={() => router.push('/join-group')}
           activeOpacity={0.8}
@@ -128,6 +132,7 @@ export default function GroupsListScreen() {
           <UserPlus size={24} color="#007AFF" strokeWidth={2.5} />
         </TouchableOpacity>
         <TouchableOpacity
+          ref={registerView('create-group')}
           style={styles.fab}
           onPress={() => router.push('/create-group')}
           activeOpacity={0.8}

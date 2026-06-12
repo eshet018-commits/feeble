@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -129,9 +129,17 @@ export default function OnboardingOverlay() {
     skipOnboarding,
     isFirstStep,
     isLastStep,
+    measureTarget,
   } = useOnboarding();
   const { width: screenW, height: screenH } = useWindowDimensions();
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [measuredRect, setMeasuredRect] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const measureRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isActive) {
@@ -145,6 +153,33 @@ export default function OnboardingOverlay() {
     }
   }, [isActive, currentStep, fadeAnim]);
 
+  // Measure the target button's actual screen position when the step changes
+  useEffect(() => {
+    if (!isActive) return;
+    const step = currentStepData;
+    if (!step?.targetRect) {
+      setMeasuredRect(null);
+      return;
+    }
+
+    setMeasuredRect(null);
+
+    // Small delay to ensure native layout is settled
+    measureRef.current = setTimeout(async () => {
+      const rect = await measureTarget(step.key);
+      if (rect) {
+        setMeasuredRect(rect);
+      }
+    }, 50);
+
+    return () => {
+      if (measureRef.current !== null) {
+        clearTimeout(measureRef.current);
+        measureRef.current = null;
+      }
+    };
+  }, [isActive, currentStep, currentStepData, measureTarget]);
+
   if (!isActive || isChecking) return null;
 
   const step = currentStepData;
@@ -156,12 +191,22 @@ export default function OnboardingOverlay() {
   let highlightH = 0;
   let isCircle = false;
 
-  if (hasTarget && step.targetRect) {
-    highlightX = step.targetRect.x * screenW;
-    highlightY = step.targetRect.y * screenH;
-    highlightW = step.targetRect.width;
-    highlightH = step.targetRect.height;
-    isCircle = step.targetRect.isCircle ?? false;
+  if (hasTarget) {
+    isCircle = step.targetRect?.isCircle ?? false;
+    if (measuredRect) {
+      // Use actual measured screen coordinates
+      highlightX = measuredRect.x;
+      highlightY = measuredRect.y;
+      highlightW = measuredRect.width;
+      highlightH = measuredRect.height;
+    } else {
+      // Fallback to hardcoded fractions while measurement is pending
+      const tr = step.targetRect!;
+      highlightX = tr.x * screenW;
+      highlightY = tr.y * screenH;
+      highlightW = tr.width;
+      highlightH = tr.height;
+    }
   }
 
   // Position the card: if target is in bottom half, place card above; otherwise below

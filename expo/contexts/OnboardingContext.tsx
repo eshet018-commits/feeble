@@ -1,6 +1,7 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { View } from 'react-native';
 import { useUser } from './UserContext';
 
 export interface OnboardingStep {
@@ -63,6 +64,44 @@ export const [OnboardingProvider, useOnboarding] = createContextHook(() => {
   const [isActive, setIsActive] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [hasChecked, setHasChecked] = useState(false);
+  const viewsRef = useRef<Map<string, View>>(new Map());
+
+  const registerView = useCallback((key: string) => {
+    return (ref: View | null) => {
+      if (ref) {
+        viewsRef.current.set(key, ref);
+      } else {
+        viewsRef.current.delete(key);
+      }
+    };
+  }, []);
+
+  const measureTarget = useCallback(
+    (
+      key: string,
+    ): Promise<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    } | null> => {
+      return new Promise((resolve) => {
+        const view = viewsRef.current.get(key);
+        if (!view) {
+          resolve(null);
+          return;
+        }
+        view.measureInWindow((x, y, width, height) => {
+          if (width === 0 && height === 0) {
+            resolve(null);
+            return;
+          }
+          resolve({ x, y, width, height });
+        });
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!userId) {
@@ -161,5 +200,7 @@ export const [OnboardingProvider, useOnboarding] = createContextHook(() => {
     startOnboarding,
     isFirstStep: currentStep === 0,
     isLastStep: currentStep === TOTAL_STEPS - 1,
+    registerView,
+    measureTarget,
   };
 });
