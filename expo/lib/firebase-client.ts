@@ -6,6 +6,7 @@ import {
   browserLocalPersistence,
   browserSessionPersistence,
   setPersistence,
+  signOut,
   type Auth,
 } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -52,30 +53,29 @@ if (missingFields.length > 0) {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const database = getDatabase(app);
 
-// On native, only bake AsyncStorage persistence into the auth instance when
-// "Remember Me" was checked. Otherwise use in-memory auth so sessions are lost
-// when the app is fully closed. On web, getAuth is fine because persistence is
-// configured dynamically in persistenceReady.
+// Always use AsyncStorage-backed auth on native. When "Remember Me" is off,
+// persistenceReady signs out any restored session before the UI sees it.
+// On web, persistence is configured dynamically in persistenceReady.
 const auth: Auth = (() => {
   if (Platform.OS !== 'web') {
-    const rememberMe = getRememberMePreference();
-    if (rememberMe) {
-      const fbAuth = require('firebase/auth');
-      return fbAuth.initializeAuth(app, {
-        persistence: fbAuth.getReactNativePersistence(AsyncStorage),
-      });
-    }
-    return getAuth(app);
+    const fbAuth = require('firebase/auth');
+    return fbAuth.initializeAuth(app, {
+      persistence: fbAuth.getReactNativePersistence(AsyncStorage),
+    });
   }
   return getAuth(app);
 })();
 
 const REMEMBER_ME_KEY = 'auth_remember_me';
 
-function getRememberMePreference(): boolean {
+async function getRememberMePreference(): Promise<boolean> {
   try {
     if (Platform.OS === 'web') {
       const val = localStorage.getItem(REMEMBER_ME_KEY);
+      if (val === 'false') return false;
+      if (val === 'true') return true;
+    } else {
+      const val = await AsyncStorage.getItem(REMEMBER_ME_KEY);
       if (val === 'false') return false;
       if (val === 'true') return true;
     }
@@ -93,12 +93,12 @@ function saveRememberMePreference(rememberMe: boolean): void {
   } catch {}
 }
 
-// On web, we set the persistence layer based on the user's last "Remember Me"
-// choice (stored in localStorage). On native, persistence was already decided
-// at auth-instance creation time — nothing to do here.
+// On web, set the persistence layer based on the saved preference.
+// On native, if "Remember Me" was off the last time the preference was saved,
+// sign out any restored session so the user starts fresh.
 const persistenceReady: Promise<void> = (async () => {
+  const rememberMe = await getRememberMePreference();
   if (Platform.OS === 'web') {
-    const rememberMe = getRememberMePreference();
     try {
       await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
       console.log('[Firebase] Web persistence:', rememberMe ? 'IndexedDB (persistent)' : 'session-only');
@@ -106,18 +106,21 @@ const persistenceReady: Promise<void> = (async () => {
       console.warn('[Firebase] Web setPersistence failed:', e);
     }
   } else {
-    console.log('[Firebase] Native auth ready (persistence:', getRememberMePreference() ? 'AsyncStorage)' : 'in-memory)');
+    if (!rememberMe) {
+      try {
+        await signOut(auth);
+        console.log('[Firebase] Signed out persisted session (remember me is off)');
+      } catch {
+        console.log('[Firebase] No persisted session to clear');
+      }
+    }
+    console.log('[Firebase] Native auth ready (remember me:', rememberMe, ')');
   }
 })();
 
 async function setAuthPersistence(rememberMe: boolean): Promise<void> {
   saveRememberMePreference(rememberMe);
 
-  // On web, update the persistence layer when the checkbox changes.
-  // On native, persistence is fixed at auth-instance creation time and cannot
-  // be changed mid-session. The preference is saved for the next app launch.
-  // The sign-out-on-background logic in auth.tsx handles clearing the current
-  // session when the box is unchecked.
   if (Platform.OS === 'web') {
     try {
       await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
