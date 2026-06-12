@@ -1,14 +1,15 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, set, get, update, remove, query, orderByChild, equalTo, onValue, off } from 'firebase/database';
-import { getAuth, initializeAuth, inMemoryPersistence, setPersistence, Auth } from 'firebase/auth';
+import {
+  getAuth,
+  inMemoryPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  setPersistence,
+  Auth,
+} from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-// getReactNativePersistence is available from @firebase/auth's React Native entry
-// point at runtime (via Metro's 'react-native' condition), but not in the main types.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { getReactNativePersistence } = require('@firebase/auth') as {
-  getReactNativePersistence: (storage: typeof AsyncStorage) => Parameters<typeof setPersistence>[1];
-};
+import { Platform } from 'react-native';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage } from 'firebase/storage';
 import { Event } from '@/types/event';
 
@@ -51,26 +52,25 @@ if (missingFields.length > 0) {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const database = getDatabase(app);
 
-let auth: Auth;
-try {
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
-  console.log('[Firebase] Auth initialized with React Native persistence (AsyncStorage)');
-} catch (e: any) {
-  if (e.code === 'auth/already-initialized') {
-    auth = getAuth(app);
-    console.log('[Firebase] Auth already initialized, using existing instance');
-  } else {
-    throw e;
-  }
-}
+const auth: Auth = getAuth(app);
 
 async function setAuthPersistence(rememberMe: boolean): Promise<void> {
-  if (rememberMe) {
-    await setPersistence(auth, getReactNativePersistence(AsyncStorage));
+  if (Platform.OS === 'web') {
+    await setPersistence(
+      auth,
+      rememberMe ? browserLocalPersistence : browserSessionPersistence,
+    );
   } else {
-    await setPersistence(auth, inMemoryPersistence);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { getReactNativePersistence } = require('@firebase/auth');
+      await setPersistence(
+        auth,
+        rememberMe ? getReactNativePersistence(AsyncStorage) : inMemoryPersistence,
+      );
+    } catch {
+      await setPersistence(auth, inMemoryPersistence);
+    }
   }
 }
 
