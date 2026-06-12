@@ -2,7 +2,6 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, set, get, update, remove, query, orderByChild, equalTo, onValue, off } from 'firebase/database';
 import {
   getAuth,
-  inMemoryPersistence,
   browserLocalPersistence,
   browserSessionPersistence,
   setPersistence,
@@ -10,45 +9,6 @@ import {
 } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-
-function createLocalStoragePersistence() {
-  const STORAGE_KEY = 'firebase:authUser:';
-  const storedKeys = new Set<string>();
-
-  async function isAvailable(): Promise<boolean> {
-    try {
-      localStorage.setItem('__fb_test__', '1');
-      localStorage.removeItem('__fb_test__');
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  return {
-    type: 'LOCAL' as const,
-    async _isAvailable() {
-      return isAvailable();
-    },
-    async _set(key: string, value: unknown) {
-      storedKeys.add(key);
-      localStorage.setItem(key, JSON.stringify(value));
-    },
-    async _get(key: string) {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : null;
-    },
-    async _remove(key: string) {
-      storedKeys.delete(key);
-      localStorage.removeItem(key);
-    },
-    _addListener(_key: string, _listener: () => void) {},
-    _removeListener(_key: string, _listener: () => void) {},
-    _shouldAllowMigration: true,
-  };
-}
-
-const localStoragePersistence = createLocalStoragePersistence();
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage } from 'firebase/storage';
 import { Event } from '@/types/event';
 
@@ -93,50 +53,59 @@ const database = getDatabase(app);
 
 const auth: Auth = getAuth(app);
 
-async function setAuthPersistence(rememberMe: boolean): Promise<void> {
-  console.log('[Firebase] setAuthPersistence called:', { rememberMe, platform: Platform.OS });
+const REMEMBER_ME_KEY = 'auth_remember_me';
+
+function getRememberMePreference(): boolean {
+  try {
+    if (Platform.OS === 'web') {
+      const val = localStorage.getItem(REMEMBER_ME_KEY);
+      if (val === 'false') return false;
+      if (val === 'true') return true;
+    }
+  } catch {}
+  return true;
+}
+
+function saveRememberMePreference(rememberMe: boolean): void {
+  try {
+    if (Platform.OS === 'web') {
+      localStorage.setItem(REMEMBER_ME_KEY, String(rememberMe));
+    } else {
+      AsyncStorage.setItem(REMEMBER_ME_KEY, String(rememberMe));
+    }
+  } catch {}
+}
+
+// Set persistence at module init - MUST run before any onAuthStateChanged listener
+const initPersistence = async () => {
+  const rememberMe = getRememberMePreference();
+  console.log('[Firebase] Init persistence, rememberMe:', rememberMe, 'platform:', Platform.OS);
 
   if (Platform.OS === 'web') {
-    if (!rememberMe) {
-      try {
-        await setPersistence(auth, browserSessionPersistence);
-        console.log('[Firebase] Persistence set to session-only');
-      } catch (e) {
-        console.warn('[Firebase] Failed to set session persistence:', e);
-      }
-      return;
-    }
-
-    const available = await localStoragePersistence._isAvailable();
-    if (available) {
-      try {
-        await setPersistence(auth, localStoragePersistence as any);
-        console.log('[Firebase] Persistence set to localStorage-based');
-        return;
-      } catch (e) {
-        console.warn('[Firebase] localStorage persistence failed, trying IndexedDB:', e);
-      }
-    }
-
     try {
-      await setPersistence(auth, browserLocalPersistence);
-      console.log('[Firebase] Persistence set to browserLocalPersistence (IndexedDB)');
+      await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
+      console.log('[Firebase] Persistence:', rememberMe ? 'IndexedDB (persistent)' : 'session-only');
     } catch (e) {
-      console.warn('[Firebase] browserLocalPersistence failed, falling back to in-memory:', e);
-      await setPersistence(auth, inMemoryPersistence);
+      console.warn('[Firebase] setPersistence failed:', e);
     }
   } else {
     if (rememberMe) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { getReactNativePersistence } = require('@firebase/auth');
         await setPersistence(auth, getReactNativePersistence(AsyncStorage));
-        console.log('[Firebase] Native persistence set to AsyncStorage');
+        console.log('[Firebase] Native persistence: AsyncStorage');
       } catch (e) {
         console.warn('[Firebase] Native persistence failed:', e);
       }
     }
   }
+};
+
+initPersistence();
+
+async function setAuthPersistence(rememberMe: boolean): Promise<void> {
+  saveRememberMePreference(rememberMe);
+  console.log('[Firebase] Remember me preference saved:', rememberMe);
 }
 
 let storage: FirebaseStorage | null;

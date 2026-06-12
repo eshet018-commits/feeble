@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -17,7 +18,8 @@ import { auth, setAuthPersistence } from '@/lib/firebase-client';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  signOut,
 } from 'firebase/auth';
 import { LogIn, UserPlus, Mail, Lock, Check } from 'lucide-react-native';
 
@@ -67,6 +69,27 @@ export default function AuthScreen() {
     }
   };
 
+  const signedInWithoutRemember = useRef(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const handlePageHide = () => {
+        if (signedInWithoutRemember.current) {
+          signOut(auth).catch(() => {});
+        }
+      };
+      window.addEventListener('pagehide', handlePageHide);
+      return () => window.removeEventListener('pagehide', handlePageHide);
+    }
+    
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background' && signedInWithoutRemember.current) {
+        signOut(auth).catch(() => {});
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
   const handleAuth = async () => {
     if (!email || !password) {
       Alert.alert('Error', 'Please fill in all fields');
@@ -87,6 +110,7 @@ export default function AuthScreen() {
 
     try {
       await setAuthPersistence(rememberMe);
+      signedInWithoutRemember.current = !rememberMe;
 
       if (isLogin) {
         console.log('[Auth] Signing in...');
