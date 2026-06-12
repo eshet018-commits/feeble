@@ -76,8 +76,9 @@ function saveRememberMePreference(rememberMe: boolean): void {
   } catch {}
 }
 
-// Set persistence at module init - MUST run before any onAuthStateChanged listener
-const initPersistence = async () => {
+// Init persistence at module init — the returned promise MUST be awaited
+// before any onAuthStateChanged listener is registered.
+const persistenceReady: Promise<void> = (async () => {
   const rememberMe = getRememberMePreference();
   console.log('[Firebase] Init persistence, rememberMe:', rememberMe, 'platform:', Platform.OS);
 
@@ -89,19 +90,22 @@ const initPersistence = async () => {
       console.warn('[Firebase] setPersistence failed:', e);
     }
   } else {
-    if (rememberMe) {
-      try {
-        const { getReactNativePersistence } = require('@firebase/auth');
+    // On native, always persist so the user stays signed in across app restarts.
+    // "Remember Me" unchecked → sign out on background (handled in auth.tsx).
+    try {
+      const rnAuth = require('@firebase/auth');
+      const { getReactNativePersistence } = rnAuth;
+      if (typeof getReactNativePersistence === 'function') {
         await setPersistence(auth, getReactNativePersistence(AsyncStorage));
         console.log('[Firebase] Native persistence: AsyncStorage');
-      } catch (e) {
-        console.warn('[Firebase] Native persistence failed:', e);
+      } else {
+        console.warn('[Firebase] getReactNativePersistence not available, auth will be in-memory only');
       }
+    } catch (e) {
+      console.warn('[Firebase] Native persistence failed:', e);
     }
   }
-};
-
-initPersistence();
+})();
 
 async function setAuthPersistence(rememberMe: boolean): Promise<void> {
   saveRememberMePreference(rememberMe);
@@ -124,7 +128,7 @@ try {
 
 console.log('[Firebase] Client initialized successfully');
 
-export { auth, storage, setAuthPersistence };
+export { auth, storage, setAuthPersistence, persistenceReady };
 
 export const firebaseClient = {
   async createEvent(eventData: {

@@ -2,7 +2,7 @@ import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState } from 'react';
 import { UserRole } from '@/types/event';
-import { auth, firebaseClient } from '@/lib/firebase-client';
+import { auth, firebaseClient, persistenceReady } from '@/lib/firebase-client';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
 export const [UserProvider, useUser] = createContextHook(() => {
@@ -18,57 +18,68 @@ export const [UserProvider, useUser] = createContextHook(() => {
 
   useEffect(() => {
     console.log('[UserContext] Setting up auth listener');
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      console.log('[UserContext] Auth state changed:', user ? user.uid : 'no user');
-      setIsLoading(true);
-      
-      if (user) {
-        setFirebaseUser(user);
-        setUserId(user.uid);
-        setUserEmail(user.email || '');
-        setIsAuthenticated(true);
-        
-        const profile = await firebaseClient.getUserProfile(user.uid);
-        
-        const storedName = await AsyncStorage.getItem(`userName_${user.uid}`);
-        if (storedName) {
-          setUserName(storedName);
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
+
+    persistenceReady.then(() => {
+      if (cancelled) return;
+      console.log('[UserContext] Persistence ready, registering auth listener');
+
+      unsub = onAuthStateChanged(auth, async (user) => {
+        console.log('[UserContext] Auth state changed:', user ? user.uid : 'no user');
+        setIsLoading(true);
+
+        if (user) {
+          setFirebaseUser(user);
+          setUserId(user.uid);
+          setUserEmail(user.email || '');
+          setIsAuthenticated(true);
+
+          const profile = await firebaseClient.getUserProfile(user.uid);
+
+          const storedName = await AsyncStorage.getItem(`userName_${user.uid}`);
+          if (storedName) {
+            setUserName(storedName);
+          } else {
+            const defaultName = user.email?.split('@')[0] || `User${Math.floor(Math.random() * 10000)}`;
+            await AsyncStorage.setItem(`userName_${user.uid}`, defaultName);
+            setUserName(defaultName);
+          }
+
+          if (profile.displayName) {
+            setDisplayName(profile.displayName);
+          } else {
+            const defaultDisplayName = user.email?.split('@')[0] || `User${Math.floor(Math.random() * 10000)}`;
+            setDisplayName(defaultDisplayName);
+          }
+
+          if (profile.profilePicture) {
+            setProfilePicture(profile.profilePicture);
+          }
+
+          const storedRole = await AsyncStorage.getItem(`userRole_${user.uid}`);
+          if (storedRole) {
+            setRole(storedRole as UserRole);
+          }
         } else {
-          const defaultName = user.email?.split('@')[0] || `User${Math.floor(Math.random() * 10000)}`;
-          await AsyncStorage.setItem(`userName_${user.uid}`, defaultName);
-          setUserName(defaultName);
+          setFirebaseUser(null);
+          setUserId('');
+          setUserName('');
+          setUserEmail('');
+          setDisplayName('');
+          setProfilePicture('');
+          setIsAuthenticated(false);
+          setRole('viewer');
         }
 
-        if (profile.displayName) {
-          setDisplayName(profile.displayName);
-        } else {
-          const defaultDisplayName = user.email?.split('@')[0] || `User${Math.floor(Math.random() * 10000)}`;
-          setDisplayName(defaultDisplayName);
-        }
-
-        if (profile.profilePicture) {
-          setProfilePicture(profile.profilePicture);
-        }
-        
-        const storedRole = await AsyncStorage.getItem(`userRole_${user.uid}`);
-        if (storedRole) {
-          setRole(storedRole as UserRole);
-        }
-      } else {
-        setFirebaseUser(null);
-        setUserId('');
-        setUserName('');
-        setUserEmail('');
-        setDisplayName('');
-        setProfilePicture('');
-        setIsAuthenticated(false);
-        setRole('viewer');
-      }
-      
-      setIsLoading(false);
+        setIsLoading(false);
+      });
     });
 
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
   }, []);
 
 
