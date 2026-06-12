@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGroups } from '@/contexts/GroupContext';
 import { useUser } from '@/contexts/UserContext';
+import OnboardingOverlay from '@/components/OnboardingOverlay';
 
 export default function GroupsListScreen() {
   const router = useRouter();
@@ -34,6 +35,7 @@ export default function GroupsListScreen() {
 
   return (
     <View style={styles.container}>
+      <OnboardingOverlay />
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.header}>
           <View>

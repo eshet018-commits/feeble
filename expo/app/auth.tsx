@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, setAuthPersistence } from '@/lib/firebase-client';
 import { 
   signInWithEmailAndPassword, 
@@ -118,8 +119,13 @@ export default function AuthScreen() {
         console.log('[Auth] Sign in successful');
       } else {
         console.log('[Auth] Creating account...');
-        await createUserWithEmailAndPassword(auth, email, password);
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
         console.log('[Auth] Account created successfully');
+        // Mark onboarding as pending for the new user
+        if (cred.user?.uid) {
+          await AsyncStorage.setItem(`onboarding_pending_${cred.user.uid}`, 'true');
+          console.log('[Auth] Onboarding marked as pending for new user');
+        }
       }
       
       router.replace('/');
