@@ -2,10 +2,11 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, set, get, update, remove, query, orderByChild, equalTo, onValue, off } from 'firebase/database';
 import {
   getAuth,
+  initializeAuth,
   browserLocalPersistence,
   browserSessionPersistence,
   setPersistence,
-  Auth,
+  type Auth,
 } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
@@ -51,7 +52,18 @@ if (missingFields.length > 0) {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const database = getDatabase(app);
 
-const auth: Auth = getAuth(app);
+// On native, use initializeAuth to bake AsyncStorage persistence into the
+// auth instance BEFORE any internal state is read.  On web, getAuth is fine
+// because the default (IndexedDB) persistence is sufficient.
+const auth: Auth = (() => {
+  if (Platform.OS !== 'web') {
+    const fbAuth = require('firebase/auth');
+    return fbAuth.initializeAuth(app, {
+      persistence: fbAuth.getReactNativePersistence(AsyncStorage),
+    });
+  }
+  return getAuth(app);
+})();
 
 const REMEMBER_ME_KEY = 'auth_remember_me';
 
@@ -76,39 +88,36 @@ function saveRememberMePreference(rememberMe: boolean): void {
   } catch {}
 }
 
-// Init persistence at module init — the returned promise MUST be awaited
-// before any onAuthStateChanged listener is registered.
+// On native, persistence is already baked into the auth instance via
+// initializeAuth.  On web, we set the persistence layer based on the
+// user's last "Remember Me" choice (stored in localStorage).
 const persistenceReady: Promise<void> = (async () => {
-  const rememberMe = getRememberMePreference();
-  console.log('[Firebase] Init persistence, rememberMe:', rememberMe, 'platform:', Platform.OS);
-
   if (Platform.OS === 'web') {
+    const rememberMe = getRememberMePreference();
     try {
       await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
-      console.log('[Firebase] Persistence:', rememberMe ? 'IndexedDB (persistent)' : 'session-only');
+      console.log('[Firebase] Web persistence:', rememberMe ? 'IndexedDB (persistent)' : 'session-only');
     } catch (e) {
-      console.warn('[Firebase] setPersistence failed:', e);
+      console.warn('[Firebase] Web setPersistence failed:', e);
     }
   } else {
-    // On native, always persist so the user stays signed in across app restarts.
-    // "Remember Me" unchecked → sign out on background (handled in auth.tsx).
-    try {
-      const rnAuth = require('@firebase/auth');
-      const { getReactNativePersistence } = rnAuth;
-      if (typeof getReactNativePersistence === 'function') {
-        await setPersistence(auth, getReactNativePersistence(AsyncStorage));
-        console.log('[Firebase] Native persistence: AsyncStorage');
-      } else {
-        console.warn('[Firebase] getReactNativePersistence not available, auth will be in-memory only');
-      }
-    } catch (e) {
-      console.warn('[Firebase] Native persistence failed:', e);
-    }
+    console.log('[Firebase] Native auth ready with AsyncStorage persistence');
   }
 })();
 
 async function setAuthPersistence(rememberMe: boolean): Promise<void> {
   saveRememberMePreference(rememberMe);
+
+  // On web, update the persistence layer when the checkbox changes.
+  // On native, persistence is fixed at init; "Remember Me" only controls
+  // sign-out-on-background (handled in auth.tsx).
+  if (Platform.OS === 'web') {
+    try {
+      await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
+    } catch (e) {
+      console.warn('[Firebase] Web setPersistence failed:', e);
+    }
+  }
   console.log('[Firebase] Remember me preference saved:', rememberMe);
 }
 
