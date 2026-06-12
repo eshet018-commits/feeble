@@ -39,3 +39,8 @@ yarn-error.*
 .vercel
 
 .rork
+
+.env
+core
+node_modules
+.expo
