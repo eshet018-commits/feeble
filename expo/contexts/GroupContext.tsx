@@ -294,15 +294,16 @@ export const [GroupProvider, useGroups] = createContextHook(() => {
     return groups;
   }, [groups]);
 
-  const isGroupAdmin = useCallback((groupId: string) => {
-    const group = groups.find(g => g.id === groupId);
-    return group?.adminId === userId;
-  }, [groups, userId]);
-
   const getUserRoleInGroup = useCallback((groupId: string) => {
     const member = allMembers.find(m => m.groupId === groupId && m.userId === userId);
     return member?.role || 'viewer';
   }, [allMembers, userId]);
+
+  const isGroupAdmin = useCallback((groupId: string) => {
+    const group = groups.find(g => g.id === groupId);
+    if (group?.adminId === userId) return true;
+    return getUserRoleInGroup(groupId) === 'admin';
+  }, [groups, userId, getUserRoleInGroup]);
 
   const isGroupCreator = useCallback((groupId: string) => {
     const group = groups.find(g => g.id === groupId);
