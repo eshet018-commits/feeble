@@ -215,7 +215,9 @@ export default function EventDetailScreen() {
                             </Text>
                           </View>
                           {totalVotes > 0 && (
-                            <Text style={styles.pollPercentage}>{percentage}%</Text>
+                            <Text style={styles.pollPercentage}>
+                              {voteCount} {voteCount === 1 ? 'vote' : 'votes'} ({percentage}%)
+                            </Text>
                           )}
                         </View>
                         <View style={styles.pollProgressTrack}>
