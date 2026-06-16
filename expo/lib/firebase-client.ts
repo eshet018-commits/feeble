@@ -12,7 +12,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage } from 'firebase/storage';
-import { Event } from '@/types/event';
+import { Event, Poll, PollOption } from '@/types/event';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -290,6 +290,52 @@ export const firebaseClient = {
     });
 
     return () => off(eventsRef);
+  },
+
+  async createPoll(eventId: string, question: string, options: PollOption[]) {
+    const poll: Poll = {
+      id: eventId,
+      question,
+      options,
+      votes: {},
+    };
+    await set(ref(database, `polls/${eventId}`), poll);
+    await update(ref(database, `events/${eventId}`), { hasPoll: true });
+    return poll;
+  },
+
+  async getPoll(eventId: string): Promise<Poll | null> {
+    const snapshot = await get(ref(database, `polls/${eventId}`));
+    if (!snapshot.exists()) return null;
+    return snapshot.val() as Poll;
+  },
+
+  subscribeToPoll(eventId: string, callback: (poll: Poll | null) => void) {
+    const pollRef = ref(database, `polls/${eventId}`);
+    onValue(pollRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        callback(null);
+        return;
+      }
+      callback(snapshot.val() as Poll);
+    });
+    return () => off(pollRef);
+  },
+
+  async voteOnPoll(eventId: string, userId: string, optionId: string) {
+    await set(ref(database, `polls/${eventId}/votes/${userId}`), optionId);
+  },
+
+  async updatePoll(eventId: string, updates: { question?: string; options?: PollOption[] }) {
+    const pollData: Record<string, unknown> = {};
+    if (updates.question !== undefined) pollData.question = updates.question;
+    if (updates.options !== undefined) pollData.options = updates.options;
+    await update(ref(database, `polls/${eventId}`), pollData);
+  },
+
+  async removePoll(eventId: string) {
+    await remove(ref(database, `polls/${eventId}`));
+    await update(ref(database, `events/${eventId}`), { hasPoll: false });
   },
 
   async uploadProfilePicture(userId: string, uri: string) {

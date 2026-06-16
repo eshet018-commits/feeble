@@ -50,6 +50,18 @@ export interface EventLocation {
   longitude: number;
 }
 
+export interface PollOption {
+  id: string;
+  text: string;
+}
+
+export interface Poll {
+  id: string;
+  question: string;
+  options: PollOption[];
+  votes: Record<string, string>;
+}
+
 export interface Event {
   id: string;
   groupId: string;
@@ -64,6 +76,7 @@ export interface Event {
   attachments: EventAttachment[];
   reminders: EventReminder[];
   location?: EventLocation;
+  hasPoll?: boolean;
   createdAt: string;
   updatedAt: string;
 }

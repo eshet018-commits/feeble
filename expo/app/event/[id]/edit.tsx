@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Calendar, Clock, Repeat, Tag, Bell, Plus, MapPin } from 'lucide-react-native';
+import { Calendar, Clock, Repeat, Tag, Bell, Plus, MapPin, BarChart3, X, Circle } from 'lucide-react-native';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
@@ -14,13 +14,13 @@ import {
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useEvents } from '@/contexts/EventContext';
-import { RepeatFrequency, EventReminder, EventLocation } from '@/types/event';
+import { RepeatFrequency, EventReminder, EventLocation, PollOption } from '@/types/event';
 import { REMINDER_OPTIONS } from '@/constants/reminders';
 
 export default function EditEventScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { events, updateEvent, categories, addCategory } = useEvents();
+  const { events, updateEvent, categories, addCategory, getPoll, createPoll, updatePoll, removePoll, subscribeToPoll } = useEvents();
 
   const event = useMemo(() => {
     return events.find((e) => e.id === id);
@@ -50,6 +50,10 @@ export default function EditEventScreen() {
   const [customCategoryColor, setCustomCategoryColor] = useState('#3B82F6');
   const [isGeocodingLocation, setIsGeocodingLocation] = useState(false);
   const [locationSearchTimeout, setLocationSearchTimeout] = useState<number | null>(null);
+  
+  const [pollEnabled, setPollEnabled] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
 
   useEffect(() => {
     if (event) {
@@ -71,6 +75,22 @@ export default function EditEventScreen() {
       }
     }
   }, [event]);
+
+  useEffect(() => {
+    if (!event) return;
+    const unsub = subscribeToPoll(event.id);
+    return () => unsub();
+  }, [event?.id, subscribeToPoll]);
+
+  useEffect(() => {
+    if (!event) return;
+    const poll = getPoll(event.id);
+    if (poll) {
+      setPollEnabled(true);
+      setPollQuestion(poll.question);
+      setPollOptions(poll.options.map(o => o.text));
+    }
+  }, [event, getPoll]);
 
   if (!event) {
     return (
@@ -113,6 +133,29 @@ export default function EditEventScreen() {
           latitude: locationCoords.latitude,
           longitude: locationCoords.longitude,
         };
+      }
+
+      if (pollEnabled && pollQuestion.trim()) {
+        const validOptions: PollOption[] = pollOptions
+          .filter((o: string) => o.trim())
+          .map((text: string, i: number) => ({ id: `opt-${i}`, text: text.trim() }));
+        if (validOptions.length >= 2) {
+          const existingPoll = getPoll(event.id);
+          if (existingPoll) {
+            await updatePoll(event.id, {
+              question: pollQuestion.trim(),
+              options: validOptions,
+            });
+          } else {
+            await updateEvent(event.id, { hasPoll: true } as any);
+            await createPoll(event.id, pollQuestion.trim(), validOptions);
+          }
+        }
+      } else if (!pollEnabled) {
+        const existingPoll = getPoll(event.id);
+        if (existingPoll) {
+          await removePoll(event.id);
+        }
       }
 
       await updateEvent(event.id, {
@@ -453,6 +496,67 @@ export default function EditEventScreen() {
               <TouchableOpacity onPress={handleClearLocation} style={styles.clearLocationButton}>
                 <Text style={styles.clearLocationText}>Clear</Text>
               </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.row}>
+            <BarChart3 size={20} color="#007AFF" />
+            <Text style={styles.label}>Poll</Text>
+            <Switch
+              value={pollEnabled}
+              onValueChange={setPollEnabled}
+              trackColor={{ false: '#E5E5E5', true: '#007AFF' }}
+              thumbColor="#FFF"
+              style={styles.pollSwitch}
+            />
+          </View>
+          {pollEnabled && (
+            <View style={styles.pollContent}>
+              <TextInput
+                style={styles.pollQuestionInput}
+                placeholder="Ask a question..."
+                placeholderTextColor="#999"
+                value={pollQuestion}
+                onChangeText={setPollQuestion}
+              />
+              {pollOptions.map((option, index) => (
+                <View key={index} style={styles.pollOptionRow}>
+                  <Circle size={8} color="#007AFF" style={styles.pollOptionDot} />
+                  <TextInput
+                    style={styles.pollOptionInput}
+                    placeholder={`Option ${index + 1}`}
+                    placeholderTextColor="#999"
+                    value={option}
+                    onChangeText={(text) => {
+                      const updated = [...pollOptions];
+                      updated[index] = text;
+                      setPollOptions(updated);
+                    }}
+                  />
+                  {pollOptions.length > 2 && (
+                    <TouchableOpacity
+                      style={styles.pollOptionRemove}
+                      onPress={() => {
+                        const updated = pollOptions.filter((_, i) => i !== index);
+                        setPollOptions(updated);
+                      }}
+                    >
+                      <X size={16} color="#FF3B30" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+              {pollOptions.length < 10 && (
+                <TouchableOpacity
+                  style={styles.addPollOptionButton}
+                  onPress={() => setPollOptions([...pollOptions, ''])}
+                >
+                  <Plus size={16} color="#007AFF" />
+                  <Text style={styles.addPollOptionText}>Add option</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
         </View>
@@ -831,6 +935,59 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600' as const,
     color: '#FFF',
+  },
+  pollSwitch: {
+    marginLeft: 'auto',
+  },
+  pollContent: {
+    marginTop: 12,
+  },
+  pollQuestionInput: {
+    backgroundColor: '#F0F0F0',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    fontSize: 16,
+    color: '#000',
+    marginBottom: 12,
+  },
+  pollOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  pollOptionDot: {
+    marginTop: 2,
+  },
+  pollOptionInput: {
+    flex: 1,
+    backgroundColor: '#F0F0F0',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    fontSize: 15,
+    color: '#000',
+  },
+  pollOptionRemove: {
+    padding: 6,
+  },
+  addPollOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  addPollOptionText: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: '#007AFF',
   },
   pickerContainer: {
     position: 'absolute',

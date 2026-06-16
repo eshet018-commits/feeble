@@ -1,7 +1,7 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Event, Category, ExpandedEvent } from '@/types/event';
+import { Event, Category, ExpandedEvent, Poll, PollOption } from '@/types/event';
 import { DEFAULT_CATEGORIES } from '@/constants/categories';
 import { scheduleEventReminders, cancelEventReminders } from '@/utils/notifications';
 import { firebaseClient } from '@/lib/firebase-client';
@@ -170,10 +170,46 @@ export const [EventProvider, useEvents] = createContextHook(() => {
     }
   }, [categories]);
 
+  const [polls, setPolls] = useState<Record<string, Poll>>({});
+
+  const subscribeToPoll = useCallback((eventId: string) => {
+    return firebaseClient.subscribeToPoll(eventId, (poll) => {
+      setPolls(prev => {
+        if (poll) {
+          return { ...prev, [eventId]: poll };
+        }
+        const next = { ...prev };
+        delete next[eventId];
+        return next;
+      });
+    });
+  }, []);
+
+  const getPoll = useCallback((eventId: string): Poll | null => {
+    return polls[eventId] || null;
+  }, [polls]);
+
+  const createPoll = useCallback(async (eventId: string, question: string, options: PollOption[]) => {
+    return firebaseClient.createPoll(eventId, question, options);
+  }, []);
+
+  const updatePoll = useCallback(async (eventId: string, updates: { question?: string; options?: PollOption[] }) => {
+    return firebaseClient.updatePoll(eventId, updates);
+  }, []);
+
+  const removePoll = useCallback(async (eventId: string) => {
+    return firebaseClient.removePoll(eventId);
+  }, []);
+
+  const voteOnPoll = useCallback(async (eventId: string, userId: string, optionId: string) => {
+    return firebaseClient.voteOnPoll(eventId, userId, optionId);
+  }, []);
+
   return {
     events,
     categories,
     isLoading,
+    polls,
     addEvent,
     updateEvent,
     deleteEvent,
@@ -181,6 +217,12 @@ export const [EventProvider, useEvents] = createContextHook(() => {
     getCategoryById,
     getEventsByGroupId,
     addCategory,
+    subscribeToPoll,
+    getPoll,
+    createPoll,
+    updatePoll,
+    removePoll,
+    voteOnPoll,
   };
 });
 

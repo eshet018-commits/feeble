@@ -9,6 +9,8 @@ import {
   Edit3,
   MapPin,
   Zap,
+  BarChart3,
+  Check,
 } from 'lucide-react-native';
 import React, { useEffect, useMemo, useRef } from 'react';
 import {
@@ -24,13 +26,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { useEvents } from '@/contexts/EventContext';
 import { useGroups } from '@/contexts/GroupContext';
+import { useUser } from '@/contexts/UserContext';
+import { PollOption } from '@/types/event';
 import { REMINDER_OPTIONS } from '@/constants/reminders';
 
 export default function EventDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { events, getCategoryById, deleteEvent } = useEvents();
+  const { events, getCategoryById, deleteEvent, getPoll, subscribeToPoll, voteOnPoll } = useEvents();
   const { getUserRoleInGroup } = useGroups();
+  const { userId } = useUser();
 
   const event = useMemo(() => {
     return events.find((e) => e.id === id);
@@ -48,6 +53,12 @@ export default function EventDetailScreen() {
   }, [event]);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!event) return;
+    const unsub = subscribeToPoll(event.id);
+    return () => unsub();
+  }, [event?.id, subscribeToPoll]);
 
   useEffect(() => {
     if (!isEventActive) return;
@@ -108,6 +119,17 @@ export default function EventDetailScreen() {
     }
   };
 
+  const poll = getPoll(event.id);
+
+  const handleVote = async (optionId: string) => {
+    if (!poll || !userId) return;
+    try {
+      await voteOnPoll(event.id, userId, optionId);
+    } catch (error) {
+      console.error('Failed to vote:', error);
+    }
+  };
+
   const handleDelete = () => {
     Alert.alert(
       'Delete Event',
@@ -143,6 +165,71 @@ export default function EventDetailScreen() {
             <Text style={styles.eventDescription}>{event.description}</Text>
           )}
         </View>
+
+        {poll && (
+          <View style={styles.pollSection}>
+            <View style={styles.pollHeader}>
+              <BarChart3 size={20} color="#007AFF" />
+              <Text style={styles.pollTitle}>Poll</Text>
+            </View>
+            <Text style={styles.pollQuestion}>{poll.question}</Text>
+            {(() => {
+              const totalVotes = Object.keys(poll.votes).length;
+              const userVote = userId ? poll.votes[userId] : null;
+              return (
+                <>
+                  {poll.options.map((option: PollOption) => {
+                    const voteCount = Object.values(poll.votes).filter((v: string) => v === option.id).length;
+                    const percentage = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
+                    const isSelected = userVote === option.id;
+
+                    return (
+                      <TouchableOpacity
+                        key={option.id}
+                        style={[
+                          styles.pollOption,
+                          isSelected && styles.pollOptionSelected,
+                        ]}
+                        onPress={() => handleVote(option.id)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.pollOptionContent}>
+                          <View style={styles.pollOptionLeft}>
+                            <View style={[
+                              styles.pollRadio,
+                              isSelected && styles.pollRadioSelected,
+                            ]}>
+                              {isSelected && <Check size={12} color="#FFF" />}
+                            </View>
+                            <Text style={[
+                              styles.pollOptionText,
+                              isSelected && styles.pollOptionTextSelected,
+                            ]}>
+                              {option.text}
+                            </Text>
+                          </View>
+                          {totalVotes > 0 && (
+                            <Text style={styles.pollPercentage}>{percentage}%</Text>
+                          )}
+                        </View>
+                        <View style={styles.pollProgressTrack}>
+                          <View style={[
+                            styles.pollProgressFill,
+                            { width: totalVotes > 0 ? `${percentage}%` as any : '0%' as any },
+                            isSelected && styles.pollProgressFillSelected,
+                          ]} />
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <Text style={styles.pollTotalVotes}>
+                    {totalVotes} {totalVotes === 1 ? 'vote' : 'votes'}
+                  </Text>
+                </>
+              );
+            })()}
+          </View>
+        )}
 
         <View style={styles.section}>
           <View style={styles.infoRow}>
@@ -313,6 +400,100 @@ const styles = StyleSheet.create({
     color: '#FFF',
     opacity: 0.95,
     lineHeight: 24,
+  },
+  pollSection: {
+    backgroundColor: '#FFF',
+    marginTop: 1,
+    padding: 20,
+  },
+  pollHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  pollTitle: {
+    fontSize: 16,
+    fontWeight: '700' as const,
+    color: '#000',
+  },
+  pollQuestion: {
+    fontSize: 17,
+    fontWeight: '600' as const,
+    color: '#000',
+    marginBottom: 16,
+  },
+  pollOption: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  pollOptionSelected: {
+    backgroundColor: '#E8F0FE',
+    borderColor: '#007AFF',
+  },
+  pollOptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  pollOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  pollRadio: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#CCC',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pollRadioSelected: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  pollOptionText: {
+    fontSize: 16,
+    color: '#000',
+    fontWeight: '500' as const,
+    flex: 1,
+  },
+  pollOptionTextSelected: {
+    color: '#007AFF',
+    fontWeight: '700' as const,
+  },
+  pollPercentage: {
+    fontSize: 15,
+    fontWeight: '700' as const,
+    color: '#666',
+  },
+  pollProgressTrack: {
+    height: 6,
+    backgroundColor: '#E5E5E5',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  pollProgressFill: {
+    height: '100%',
+    backgroundColor: '#007AFF',
+    borderRadius: 3,
+  },
+  pollProgressFillSelected: {
+    backgroundColor: '#007AFF',
+  },
+  pollTotalVotes: {
+    fontSize: 13,
+    color: '#999',
+    textAlign: 'center',
+    marginTop: 8,
   },
   section: {
     backgroundColor: '#FFF',

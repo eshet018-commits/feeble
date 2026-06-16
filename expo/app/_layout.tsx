@@ -50,6 +50,14 @@ function RootLayoutNav() {
         }} 
       />
       <Stack.Screen 
+        name="event/[id]/edit" 
+        options={{ 
+          headerShown: true,
+          title: "Edit Event",
+          presentation: "card"
+        }} 
+      />
+      <Stack.Screen 
         name="create-group" 
         options={{ 
           headerShown: false,
