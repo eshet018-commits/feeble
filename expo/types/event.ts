@@ -9,6 +9,7 @@ export interface Group {
   adminId: string;
   creatorId: string;
   inviteCode: string;
+  chatEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -89,3 +90,20 @@ export interface ExpandedEvent extends Event {
 export type JoinGroupResult = 
   | { success: true; groupId: string; groupName: string; error?: never }
   | { success: false; error: string; groupId?: never; groupName?: never };
+
+export interface Chat {
+  id: string;
+  groupId: string;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  chatId: string;
+  userId: string;
+  userName: string;
+  text: string;
+  createdAt: string;
+}

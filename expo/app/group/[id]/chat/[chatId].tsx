@@ -1,0 +1,334 @@
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { Send, ArrowLeft } from 'lucide-react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+} from 'react-native';
+
+import { useUser } from '@/contexts/UserContext';
+import { useChats } from '@/contexts/ChatContext';
+import { ChatMessage } from '@/types/event';
+
+export default function ChatRoomScreen() {
+  const router = useRouter();
+  const { id: groupId, chatId } = useLocalSearchParams<{
+    id: string;
+    chatId: string;
+  }>();
+  const { userId } = useUser();
+  const {
+    chats,
+    subscribeToMessages,
+    sendMessage,
+    getMessagesForChat,
+  } = useChats();
+
+  const [text, setText] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const flatListRef = useRef<FlatList<ChatMessage>>(null);
+
+  const chat = chats.find((c) => c.id === chatId);
+  const messages = getMessagesForChat(chatId!);
+
+  useEffect(() => {
+    if (!chatId) return;
+    const unsub = subscribeToMessages(chatId);
+    return () => {
+      unsub();
+    };
+  }, [chatId, subscribeToMessages]);
+
+  useEffect(() => {
+    if (messages.length > 0 && isInitialLoad) {
+      setIsInitialLoad(false);
+    }
+  }, [messages, isInitialLoad]);
+
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }, [messages.length]);
+
+  const handleSend = async () => {
+    const trimmed = text.trim();
+    if (!trimmed || !chatId) return;
+    setIsSending(true);
+    try {
+      await sendMessage(chatId, trimmed);
+      setText('');
+    } catch (error: any) {
+      console.error('Failed to send message:', error);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const formatTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  const renderMessage = ({ item }: { item: ChatMessage }) => {
+    const isMine = item.userId === userId;
+
+    return (
+      <View
+        style={[
+          styles.messageRow,
+          isMine ? styles.messageRowMine : styles.messageRowTheirs,
+        ]}
+      >
+        {!isMine && (
+          <Text style={styles.messageAuthor}>{item.userName}</Text>
+        )}
+        <View
+          style={[
+            styles.messageBubble,
+            isMine ? styles.messageBubbleMine : styles.messageBubbleTheirs,
+          ]}
+        >
+          <Text
+            style={[
+              styles.messageText,
+              isMine ? styles.messageTextMine : styles.messageTextTheirs,
+            ]}
+          >
+            {item.text}
+          </Text>
+        </View>
+        <Text
+          style={[
+            styles.messageTime,
+            isMine ? styles.messageTimeMine : styles.messageTimeTheirs,
+          ]}
+        >
+          {formatTime(item.createdAt)}
+        </Text>
+      </View>
+    );
+  };
+
+  if (!chat) {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen options={{ title: 'Chat' }} />
+        <View style={styles.loadingState}>
+          <ActivityIndicator size="large" color="#007AFF" />
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
+      <Stack.Screen
+        options={{
+          title: chat.name,
+          headerLeft: () => (
+            <TouchableOpacity
+              onPress={() => router.back()}
+              style={styles.backButton}
+            >
+              <ArrowLeft size={22} color="#007AFF" />
+            </TouchableOpacity>
+          ),
+        }}
+      />
+
+      <FlatList
+        ref={flatListRef}
+        data={messages}
+        keyExtractor={(item) => item.id}
+        renderItem={renderMessage}
+        style={styles.messageList}
+        contentContainerStyle={styles.messageListContent}
+        showsVerticalScrollIndicator={false}
+        onContentSizeChange={() => {
+          if (messages.length > 0) {
+            flatListRef.current?.scrollToEnd({ animated: false });
+          }
+        }}
+        ListEmptyComponent={
+          isInitialLoad ? (
+            <View style={styles.loadingState}>
+              <ActivityIndicator size="large" color="#007AFF" />
+            </View>
+          ) : (
+            <View style={styles.emptyMessages}>
+              <Text style={styles.emptyMessagesText}>
+                No messages yet. Say hello!
+              </Text>
+            </View>
+          )
+        }
+      />
+
+      <View style={styles.inputBar}>
+        <TextInput
+          style={styles.textInput}
+          value={text}
+          onChangeText={setText}
+          placeholder="Type a message..."
+          placeholderTextColor="#999"
+          multiline
+          maxLength={1000}
+          returnKeyType="default"
+        />
+        <TouchableOpacity
+          style={[
+            styles.sendButton,
+            (!text.trim() || isSending) && styles.sendButtonDisabled,
+          ]}
+          onPress={handleSend}
+          disabled={!text.trim() || isSending}
+          activeOpacity={0.7}
+        >
+          <Send
+            size={18}
+            color={text.trim() && !isSending ? '#FFF' : '#CCC'}
+          />
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F5F5F7',
+  },
+  backButton: {
+    paddingRight: 8,
+  },
+  messageList: {
+    flex: 1,
+  },
+  messageListContent: {
+    padding: 16,
+    paddingBottom: 8,
+  },
+  messageRow: {
+    marginBottom: 12,
+    maxWidth: '80%',
+  },
+  messageRowMine: {
+    alignSelf: 'flex-end',
+    alignItems: 'flex-end',
+  },
+  messageRowTheirs: {
+    alignSelf: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  messageAuthor: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: '#666',
+    marginBottom: 4,
+    paddingHorizontal: 4,
+  },
+  messageBubble: {
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  messageBubbleMine: {
+    backgroundColor: '#007AFF',
+    borderBottomRightRadius: 6,
+  },
+  messageBubbleTheirs: {
+    backgroundColor: '#FFF',
+    borderBottomLeftRadius: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  messageText: {
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  messageTextMine: {
+    color: '#FFF',
+  },
+  messageTextTheirs: {
+    color: '#000',
+  },
+  messageTime: {
+    fontSize: 11,
+    marginTop: 4,
+    paddingHorizontal: 4,
+  },
+  messageTimeMine: {
+    color: '#999',
+  },
+  messageTimeTheirs: {
+    color: '#999',
+  },
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: '#FFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5E5',
+    gap: 8,
+  },
+  textInput: {
+    flex: 1,
+    backgroundColor: '#F5F5F7',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+    fontSize: 16,
+    color: '#000',
+    maxHeight: 120,
+  },
+  sendButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#E5E5E5',
+  },
+  loadingState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 100,
+  },
+  emptyMessages: {
+    alignItems: 'center',
+    paddingVertical: 80,
+  },
+  emptyMessagesText: {
+    fontSize: 15,
+    color: '#999',
+  },
+});

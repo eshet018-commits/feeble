@@ -7,6 +7,7 @@ import { EventProvider } from "@/contexts/EventContext";
 import { UserProvider } from "@/contexts/UserContext";
 import { GroupProvider } from "@/contexts/GroupContext";
 import { OnboardingProvider } from "@/contexts/OnboardingContext";
+import { ChatProvider } from "@/contexts/ChatContext";
 import { trpc, trpcClient } from "@/lib/trpc";
 
 SplashScreen.preventAutoHideAsync();
@@ -111,6 +112,22 @@ function RootLayoutNav() {
           presentation: "card"
         }} 
       />
+      <Stack.Screen 
+        name="group/[id]/chats" 
+        options={{ 
+          headerShown: true,
+          title: "Chats",
+          presentation: "card"
+        }} 
+      />
+      <Stack.Screen 
+        name="group/[id]/chat/[chatId]" 
+        options={{ 
+          headerShown: true,
+          title: "Chat",
+          presentation: "card"
+        }} 
+      />
     </Stack>
   );
 }
@@ -127,9 +144,11 @@ export default function RootLayout() {
           <UserProvider>
             <OnboardingProvider>
               <GroupProvider>
-                <EventProvider>
-                  <RootLayoutNav />
-                </EventProvider>
+                <ChatProvider>
+                  <EventProvider>
+                    <RootLayoutNav />
+                  </EventProvider>
+                </ChatProvider>
               </GroupProvider>
             </OnboardingProvider>
           </UserProvider>

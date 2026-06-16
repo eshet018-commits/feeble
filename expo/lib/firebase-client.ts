@@ -12,7 +12,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage } from 'firebase/storage';
-import { Event, Poll, PollOption } from '@/types/event';
+import { Event, Poll, PollOption, Chat, ChatMessage } from '@/types/event';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -408,5 +408,71 @@ export const firebaseClient = {
 
   async updateUserProfile(userId: string, updates: { displayName?: string; profilePicture?: string; userName?: string }) {
     await update(ref(database, `users/${userId}`), updates);
+  },
+
+  async createChat(groupId: string, name: string, createdBy: string): Promise<Chat> {
+    const chatId = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const chat: Chat = {
+      id: chatId,
+      groupId,
+      name,
+      createdBy,
+      createdAt: new Date().toISOString(),
+    };
+    await set(ref(database, `chats/${chatId}`), chat);
+    return chat;
+  },
+
+  async deleteChat(chatId: string): Promise<void> {
+    await remove(ref(database, `chats/${chatId}/messages`));
+    await remove(ref(database, `chats/${chatId}`));
+  },
+
+  subscribeToGroupChats(groupId: string, callback: (chats: Chat[]) => void) {
+    const chatsRef = ref(database, 'chats');
+
+    onValue(chatsRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        callback([]);
+        return;
+      }
+      const allChats = snapshot.val();
+      const chats: Chat[] = Object.values(allChats);
+      const filtered = chats.filter((c) => c.groupId === groupId);
+      callback(filtered);
+    });
+
+    return () => off(chatsRef);
+  },
+
+  async sendMessage(chatId: string, userId: string, userName: string, text: string): Promise<ChatMessage> {
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const message: ChatMessage = {
+      id: messageId,
+      chatId,
+      userId,
+      userName,
+      text,
+      createdAt: new Date().toISOString(),
+    };
+    await set(ref(database, `chats/${chatId}/messages/${messageId}`), message);
+    return message;
+  },
+
+  subscribeToMessages(chatId: string, callback: (messages: ChatMessage[]) => void) {
+    const messagesRef = ref(database, `chats/${chatId}/messages`);
+
+    onValue(messagesRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        callback([]);
+        return;
+      }
+      const messagesData = snapshot.val();
+      const messages: ChatMessage[] = Object.values(messagesData);
+      messages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      callback(messages);
+    });
+
+    return () => off(messagesRef);
   },
 };

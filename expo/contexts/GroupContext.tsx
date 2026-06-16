@@ -207,6 +207,7 @@ export const [GroupProvider, useGroups] = createContextHook(() => {
       adminId: userId,
       creatorId: userId,
       inviteCode,
+      chatEnabled: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -406,6 +407,23 @@ export const [GroupProvider, useGroups] = createContextHook(() => {
     }
   }, [userId, userName]);
 
+  const toggleChatEnabled = useCallback(async (groupId: string, enabled: boolean) => {
+    if (!isConfigured || !database) {
+      throw new Error('Firebase is not configured');
+    }
+
+    const userRole = getUserRoleInGroup(groupId);
+    if (userRole !== 'admin') {
+      throw new Error('Only admins can toggle chat');
+    }
+
+    console.log('Toggling chat for group:', { groupId, enabled });
+    await update(ref(database, `groups/${groupId}`), {
+      chatEnabled: enabled,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [getUserRoleInGroup]);
+
   const leaveGroup = useCallback(async (groupId: string) => {
     if (!isConfigured || !database) {
       throw new Error('Firebase is not configured');
@@ -452,5 +470,6 @@ export const [GroupProvider, useGroups] = createContextHook(() => {
     demoteMember,
     joinGroupWithCode,
     leaveGroup,
+    toggleChatEnabled,
   };
 });

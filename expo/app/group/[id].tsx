@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Calendar, Plus, Users, Settings, Repeat, UserPlus, LogOut, Zap } from 'lucide-react-native';
+import { Calendar, Plus, Users, Settings, Repeat, UserPlus, LogOut, Zap, MessageCircle } from 'lucide-react-native';
 import React, { useEffect, useMemo, useRef } from 'react';
 import {
   View,
@@ -24,6 +24,7 @@ export default function GroupDetailScreen() {
   const group = getGroupById(id!);
   const isAdmin = isGroupAdmin(id!);
   const members = getMembersByGroupId(id!);
+  const chatEnabled = group?.chatEnabled || false;
 
   const upcomingEvents = useMemo(() => {
     const now = new Date();
@@ -194,6 +195,14 @@ export default function GroupDetailScreen() {
           title: group.name,
           headerRight: () => (
             <View style={styles.headerButtons}>
+              {chatEnabled && (
+                <TouchableOpacity
+                  onPress={() => router.push(`/group/${id}/chats` as any)}
+                  style={styles.headerButton}
+                >
+                  <MessageCircle size={22} color="#007AFF" />
+                </TouchableOpacity>
+              )}
               {isAdmin ? (
                 <TouchableOpacity
                   onPress={handleSettings}

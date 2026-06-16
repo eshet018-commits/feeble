@@ -70,6 +70,7 @@ export const groupsRouter = createTRPCRouter({
         adminId: input.adminId,
         creatorId: input.adminId,
         inviteCode,
+        chatEnabled: false,
         createdAt: now,
         updatedAt: now,
       };
