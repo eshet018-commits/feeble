@@ -1,6 +1,6 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Calendar, Plus, Users, Settings, Repeat, UserPlus, LogOut } from 'lucide-react-native';
-import React, { useMemo } from 'react';
+import { Calendar, Plus, Users, Settings, Repeat, UserPlus, LogOut, Zap } from 'lucide-react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Animated,
 } from 'react-native';
 
 import { useGroups } from '@/contexts/GroupContext';
@@ -67,6 +68,13 @@ export default function GroupDetailScreen() {
     });
   };
 
+  const isEventActive = (event: ExpandedEvent): boolean => {
+    const now = new Date();
+    const start = new Date(event.startDate);
+    const end = new Date(event.endDate);
+    return now >= start && now <= end;
+  };
+
   const handleSettings = () => {
     router.push(`/group/${id}/settings` as any);
   };
@@ -94,28 +102,63 @@ export default function GroupDetailScreen() {
     );
   };
 
+  const LivePulse = ({ event }: { event: ExpandedEvent }) => {
+    const pulseAnim = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 0.4,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulse.start();
+      return () => pulse.stop();
+    }, [pulseAnim]);
+
+    if (!isEventActive(event)) return null;
+
+    return (
+      <View style={styles.liveBadge}>
+        <Animated.View style={{ opacity: pulseAnim }}>
+          <Zap size={12} color="#22C55E" />
+        </Animated.View>
+        <Text style={styles.liveBadgeText}>LIVE</Text>
+      </View>
+    );
+  };
+
   const renderEventCard = (event: ExpandedEvent) => {
     const category = getCategoryById(event.categoryId);
+    const active = isEventActive(event);
     
     return (
       <TouchableOpacity
         key={`${event.id}-${event.instanceDate}`}
-        style={styles.eventCard}
+        style={[styles.eventCard, active && styles.eventCardActive]}
         onPress={() => router.push({ pathname: '/event/[id]', params: { id: event.id } })}
         activeOpacity={0.7}
       >
-        <View style={[styles.eventColorBar, { backgroundColor: category?.color || '#999' }]} />
+        <View style={[styles.eventColorBar, active && styles.eventColorBarActive, { backgroundColor: category?.color || '#999' }]} />
         <View style={styles.eventContent}>
           <View style={styles.eventHeader}>
             <View style={styles.eventTitleRow}>
-              <Text style={styles.eventTitle} numberOfLines={1}>
+              <Text style={[styles.eventTitle, active && styles.eventTitleActive]} numberOfLines={1}>
                 {event.title}
               </Text>
               {event.isRecurring && (
-                <Repeat size={14} color="#666" style={styles.repeatIcon} />
+                <Repeat size={14} color={active ? '#22C55E' : '#666'} style={styles.repeatIcon} />
               )}
             </View>
-            <Text style={styles.eventTime}>
+            <Text style={[styles.eventTime, active && styles.eventTimeActive]}>
               {formatTime(event.instanceDate, event.allDay)}
             </Text>
           </View>
@@ -125,6 +168,7 @@ export default function GroupDetailScreen() {
             </Text>
           )}
           <View style={styles.eventFooter}>
+            <LivePulse event={event} />
             <View style={styles.categoryBadge}>
               <View style={[styles.categoryDot, { backgroundColor: category?.color || '#999' }]} />
               <Text style={styles.categoryText}>{category?.name || 'Uncategorized'}</Text>
@@ -362,6 +406,42 @@ const styles = StyleSheet.create({
   eventFooter: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  eventCardActive: {
+    backgroundColor: '#F0FFF4',
+    borderWidth: 1.5,
+    borderColor: '#22C55E',
+    shadowColor: '#22C55E',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  eventColorBarActive: {
+    width: 4,
+  },
+  eventTitleActive: {
+    color: '#166534',
+  },
+  eventTimeActive: {
+    color: '#22C55E',
+    fontWeight: '700' as const,
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  liveBadgeText: {
+    fontSize: 11,
+    fontWeight: '800' as const,
+    color: '#166534',
+    letterSpacing: 0.5,
   },
   categoryBadge: {
     flexDirection: 'row',

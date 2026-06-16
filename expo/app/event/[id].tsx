@@ -8,8 +8,9 @@ import {
   Trash2,
   Edit3,
   MapPin,
+  Zap,
 } from 'lucide-react-native';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,6 +18,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
@@ -36,6 +38,36 @@ export default function EventDetailScreen() {
 
   const userRole = event?.groupId ? getUserRoleInGroup(event.groupId) : 'viewer';
   const isGroupAdmin = userRole === 'admin';
+
+  const isEventActive = useMemo(() => {
+    if (!event) return false;
+    const now = new Date();
+    const start = new Date(event.startDate);
+    const end = new Date(event.endDate);
+    return now >= start && now <= end;
+  }, [event]);
+
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!isEventActive) return;
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.4,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [isEventActive, pulseAnim]);
 
   if (!event) {
     return (
@@ -97,6 +129,14 @@ export default function EventDetailScreen() {
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {isEventActive && (
+          <View style={styles.activeBanner}>
+            <Animated.View style={{ opacity: pulseAnim, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Zap size={16} color="#FFF" />
+            </Animated.View>
+            <Text style={styles.activeBannerText}>Happening Now</Text>
+          </View>
+        )}
         <View style={[styles.header, { backgroundColor: category?.color || '#999' }]}>
           <Text style={styles.eventTitle}>{event.title}</Text>
           {event.description && (
@@ -398,5 +438,20 @@ const styles = StyleSheet.create({
   map: {
     width: '100%',
     height: '100%',
+  },
+  activeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#22C55E',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+  },
+  activeBannerText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFF',
+    letterSpacing: 0.5,
   },
 });
