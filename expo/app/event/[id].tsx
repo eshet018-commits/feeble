@@ -141,7 +141,11 @@ export default function EventDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             await deleteEvent(event.id);
-            router.back();
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace('/');
+            }
           },
         },
       ]
@@ -174,12 +178,13 @@ export default function EventDetailScreen() {
             </View>
             <Text style={styles.pollQuestion}>{poll.question}</Text>
             {(() => {
-              const totalVotes = Object.keys(poll.votes).length;
-              const userVote = userId ? poll.votes[userId] : null;
+              const votes = poll.votes ?? {};
+              const totalVotes = Object.keys(votes).length;
+              const userVote = userId ? votes[userId] : null;
               return (
                 <>
                   {poll.options.map((option: PollOption) => {
-                    const voteCount = Object.values(poll.votes).filter((v: string) => v === option.id).length;
+                    const voteCount = Object.values(votes).filter((v: string) => v === option.id).length;
                     const percentage = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
                     const isSelected = userVote === option.id;
 
