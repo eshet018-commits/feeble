@@ -21,6 +21,7 @@ import {
   TouchableOpacity,
   Alert,
   Animated,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
@@ -329,29 +330,40 @@ export default function EventDetailScreen() {
               </View>
             </View>
             <View style={styles.mapContainer}>
-              <MapView
-                style={styles.map}
-                provider={PROVIDER_DEFAULT}
-                initialRegion={{
-                  latitude: event.location.latitude,
-                  longitude: event.location.longitude,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01,
-                }}
-                scrollEnabled={false}
-                zoomEnabled={false}
-                pitchEnabled={false}
-                rotateEnabled={false}
-              >
-                <Marker
-                  coordinate={{
+              {Platform.OS === 'web' ? (
+                <View style={styles.mapFallback}>
+                  <MapPin size={32} color="#007AFF" />
+                  <Text style={styles.mapFallbackTitle}>{event.title}</Text>
+                  <Text style={styles.mapFallbackAddress}>{event.location.address}</Text>
+                  <Text style={styles.mapFallbackCoords}>
+                    {event.location.latitude.toFixed(4)}, {event.location.longitude.toFixed(4)}
+                  </Text>
+                </View>
+              ) : (
+                <MapView
+                  style={styles.map}
+                  provider={PROVIDER_DEFAULT}
+                  initialRegion={{
                     latitude: event.location.latitude,
                     longitude: event.location.longitude,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
                   }}
-                  title={event.title}
-                  description={event.location.address}
-                />
-              </MapView>
+                  scrollEnabled={false}
+                  zoomEnabled={false}
+                  pitchEnabled={false}
+                  rotateEnabled={false}
+                >
+                  <Marker
+                    coordinate={{
+                      latitude: event.location.latitude,
+                      longitude: event.location.longitude,
+                    }}
+                    title={event.title}
+                    description={event.location.address}
+                  />
+                </MapView>
+              )}
             </View>
           </View>
         )}
@@ -624,6 +636,30 @@ const styles = StyleSheet.create({
   map: {
     width: '100%',
     height: '100%',
+  },
+  mapFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    gap: 6,
+  },
+  mapFallbackTitle: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: '#000',
+    textAlign: 'center',
+  },
+  mapFallbackAddress: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
+  mapFallbackCoords: {
+    fontSize: 12,
+    color: '#999',
+    fontFamily: 'monospace',
+    marginTop: 4,
   },
   activeBanner: {
     flexDirection: 'row',
