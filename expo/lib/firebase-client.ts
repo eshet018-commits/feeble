@@ -12,7 +12,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage } from 'firebase/storage';
-import { Event, Poll, PollOption, Chat, ChatMessage } from '@/types/event';
+import { Event, Poll, PollOption, Chat, ChatMessage, ChatVisibility } from '@/types/event';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -410,17 +410,22 @@ export const firebaseClient = {
     await update(ref(database, `users/${userId}`), updates);
   },
 
-  async createChat(groupId: string, name: string, createdBy: string): Promise<Chat> {
+  async createChat(groupId: string, name: string, createdBy: string, visibility: ChatVisibility = 'open'): Promise<Chat> {
     const chatId = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const chat: Chat = {
       id: chatId,
       groupId,
       name,
       createdBy,
+      visibility,
       createdAt: new Date().toISOString(),
     };
     await set(ref(database, `chats/${chatId}`), chat);
     return chat;
+  },
+
+  async updateChat(chatId: string, updates: { name?: string; visibility?: ChatVisibility }): Promise<void> {
+    await update(ref(database, `chats/${chatId}`), updates);
   },
 
   async deleteChat(chatId: string): Promise<void> {

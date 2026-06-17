@@ -1,6 +1,6 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useCallback, useState, useEffect, useRef } from 'react';
-import { Chat, ChatMessage } from '@/types/event';
+import { Chat, ChatMessage, ChatVisibility } from '@/types/event';
 import { useUser } from './UserContext';
 import { firebaseClient } from '@/lib/firebase-client';
 
@@ -41,11 +41,18 @@ export const [ChatProvider, useChats] = createContextHook(() => {
   }, []);
 
   const createChat = useCallback(
-    async (groupId: string, name: string) => {
+    async (groupId: string, name: string, visibility: ChatVisibility = 'open') => {
       if (!userId) throw new Error('User not authenticated');
-      return await firebaseClient.createChat(groupId, name, userId);
+      return await firebaseClient.createChat(groupId, name, userId, visibility);
     },
     [userId]
+  );
+
+  const updateChat = useCallback(
+    async (chatId: string, updates: { name?: string; visibility?: ChatVisibility }) => {
+      await firebaseClient.updateChat(chatId, updates);
+    },
+    []
   );
 
   const deleteChat = useCallback(async (chatId: string) => {
@@ -87,6 +94,7 @@ export const [ChatProvider, useChats] = createContextHook(() => {
     subscribeToChats,
     subscribeToMessages,
     createChat,
+    updateChat,
     deleteChat,
     sendMessage,
     getMessagesForChat,

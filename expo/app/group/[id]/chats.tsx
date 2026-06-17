@@ -1,6 +1,6 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { MessageCircle, Plus, Trash2, Lock } from 'lucide-react-native';
-import React, { useEffect, useState } from 'react';
+import { MessageCircle, Plus, Trash2, Lock, Eye, EyeOff, MessageSquareX } from 'lucide-react-native';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,7 +16,25 @@ import {
 
 import { useGroups } from '@/contexts/GroupContext';
 import { useChats } from '@/contexts/ChatContext';
-import { Chat } from '@/types/event';
+import { Chat, ChatVisibility } from '@/types/event';
+
+const VISIBILITY_OPTIONS: { value: ChatVisibility; label: string; icon: typeof Eye; description: string }[] = [
+  { value: 'open', label: 'Open', icon: Eye, description: 'Everyone can view and type' },
+  { value: 'readonly', label: 'Read-Only', icon: MessageSquareX, description: 'Everyone can view, only admins can type' },
+  { value: 'admin-only', label: 'Admin Only', icon: EyeOff, description: 'Only admins can view and type' },
+];
+
+const VISIBILITY_LABELS: Record<ChatVisibility, string> = {
+  'open': 'Open',
+  'admin-only': 'Admin Only',
+  'readonly': 'Read-Only',
+};
+
+const VISIBILITY_COLORS: Record<ChatVisibility, string> = {
+  'open': '#34C759',
+  'admin-only': '#FF3B30',
+  'readonly': '#FF9500',
+};
 
 export default function ChatsScreen() {
   const router = useRouter();
@@ -26,6 +44,7 @@ export default function ChatsScreen() {
     chats,
     subscribeToChats,
     createChat,
+    updateChat,
     deleteChat,
   } = useChats();
 
@@ -34,13 +53,22 @@ export default function ChatsScreen() {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newChatName, setNewChatName] = useState('');
+  const [newChatVisibility, setNewChatVisibility] = useState<ChatVisibility>('open');
   const [isCreating, setIsCreating] = useState(false);
+
+  const [editingChat, setEditingChat] = useState<Chat | null>(null);
+  const [editVisibility, setEditVisibility] = useState<ChatVisibility>('open');
 
   useEffect(() => {
     if (!id) return;
     const unsub = subscribeToChats(id);
     return () => { unsub(); };
   }, [id, subscribeToChats]);
+
+  const visibleChats = useMemo(() => {
+    if (isAdmin) return chats;
+    return chats.filter((c) => c.visibility !== 'admin-only');
+  }, [chats, isAdmin]);
 
   if (!group) {
     return (
@@ -73,8 +101,9 @@ export default function ChatsScreen() {
     }
     setIsCreating(true);
     try {
-      await createChat(id!, name);
+      await createChat(id!, name, newChatVisibility);
       setNewChatName('');
+      setNewChatVisibility('open');
       setShowCreateModal(false);
     } catch (error: any) {
       Alert.alert('Error', error?.message || 'Failed to create chat');
@@ -102,6 +131,21 @@ export default function ChatsScreen() {
         },
       ]
     );
+  };
+
+  const openEditVisibility = (chat: Chat) => {
+    setEditingChat(chat);
+    setEditVisibility(chat.visibility);
+  };
+
+  const handleSaveVisibility = async () => {
+    if (!editingChat) return;
+    try {
+      await updateChat(editingChat.id, { visibility: editVisibility });
+      setEditingChat(null);
+    } catch (error: any) {
+      Alert.alert('Error', error?.message || 'Failed to update chat');
+    }
   };
 
   const formatDate = (dateStr: string) => {
@@ -139,7 +183,7 @@ export default function ChatsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {chats.length === 0 ? (
+        {visibleChats.length === 0 ? (
           <View style={styles.emptyState}>
             <MessageCircle size={48} color="#CCC" strokeWidth={1.5} />
             <Text style={styles.emptyTitle}>No Chats Yet</Text>
@@ -150,41 +194,78 @@ export default function ChatsScreen() {
             </Text>
           </View>
         ) : (
-          chats.map((chat) => (
-            <TouchableOpacity
-              key={chat.id}
-              style={styles.chatCard}
-              onPress={() =>
-                router.push(
-                  `/group/${id}/chat/${chat.id}` as any
-                )
-              }
-              activeOpacity={0.7}
-              onLongPress={() => isAdmin && handleDeleteChat(chat)}
-            >
-              <View style={styles.chatIconContainer}>
-                <MessageCircle size={22} color="#007AFF" />
-              </View>
-              <View style={styles.chatInfo}>
-                <Text style={styles.chatName}>{chat.name}</Text>
-                <Text style={styles.chatMeta}>
-                  Created {formatDate(chat.createdAt)}
-                </Text>
-              </View>
-              {isAdmin && (
-                <TouchableOpacity
-                  onPress={() => handleDeleteChat(chat)}
-                  style={styles.deleteButton}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Trash2 size={16} color="#FF3B30" />
-                </TouchableOpacity>
-              )}
-            </TouchableOpacity>
-          ))
+          visibleChats.map((chat) => {
+            const isReadonlyForUser = !isAdmin && chat.visibility === 'readonly';
+            const visibilityColor = VISIBILITY_COLORS[chat.visibility];
+
+            return (
+              <TouchableOpacity
+                key={chat.id}
+                style={styles.chatCard}
+                onPress={() =>
+                  router.push(
+                    `/group/${id}/chat/${chat.id}` as any
+                  )
+                }
+                onLongPress={() => {
+                  if (isAdmin) openEditVisibility(chat);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={styles.chatIconContainer}>
+                  {chat.visibility === 'admin-only' ? (
+                    <EyeOff size={20} color={visibilityColor} />
+                  ) : chat.visibility === 'readonly' ? (
+                    <MessageSquareX size={20} color={visibilityColor} />
+                  ) : (
+                    <MessageCircle size={20} color="#007AFF" />
+                  )}
+                </View>
+                <View style={styles.chatInfo}>
+                  <View style={styles.chatNameRow}>
+                    <Text style={styles.chatName}>{chat.name}</Text>
+                    <View style={[styles.visibilityBadge, { backgroundColor: visibilityColor + '20' }]}>
+                      <Text style={[styles.visibilityBadgeText, { color: visibilityColor }]}>
+                        {VISIBILITY_LABELS[chat.visibility]}
+                      </Text>
+                    </View>
+                    {isReadonlyForUser && (
+                      <View style={[styles.visibilityBadge, { backgroundColor: '#FF950020' }]}>
+                        <Text style={[styles.visibilityBadgeText, { color: '#FF9500' }]}>
+                          View Only
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.chatMeta}>
+                    Created {formatDate(chat.createdAt)}
+                  </Text>
+                </View>
+                {isAdmin && (
+                  <View style={styles.chatActions}>
+                    <TouchableOpacity
+                      onPress={() => openEditVisibility(chat)}
+                      style={styles.editVisButton}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.editVisButtonText}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteChat(chat)}
+                      style={styles.deleteButton}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Trash2 size={16} color="#FF3B30" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })
         )}
       </ScrollView>
 
+      {/* Create Chat Modal */}
       <Modal
         visible={showCreateModal}
         animationType="fade"
@@ -213,12 +294,42 @@ export default function ChatsScreen() {
               returnKeyType="done"
               onSubmitEditing={handleCreateChat}
             />
+
+            <Text style={styles.sectionLabel}>Visibility</Text>
+            <View style={styles.visibilityOptions}>
+              {VISIBILITY_OPTIONS.map((opt) => {
+                const Icon = opt.icon;
+                const isSelected = newChatVisibility === opt.value;
+                const color = VISIBILITY_COLORS[opt.value];
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[
+                      styles.visibilityOption,
+                      isSelected && { borderColor: color, backgroundColor: color + '10' },
+                    ]}
+                    onPress={() => setNewChatVisibility(opt.value)}
+                    activeOpacity={0.7}
+                  >
+                    <Icon size={18} color={isSelected ? color : '#999'} />
+                    <View style={styles.visibilityOptionText}>
+                      <Text style={[styles.visibilityOptionLabel, isSelected && { color, fontWeight: '600' as const }]}>
+                        {opt.label}
+                      </Text>
+                      <Text style={styles.visibilityOptionDesc}>{opt.description}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => {
                   setShowCreateModal(false);
                   setNewChatName('');
+                  setNewChatVisibility('open');
                 }}
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -238,6 +349,71 @@ export default function ChatsScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Edit Visibility Modal */}
+      <Modal
+        visible={editingChat !== null}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setEditingChat(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setEditingChat(null)}
+          />
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Edit Chat</Text>
+            {editingChat && (
+              <Text style={styles.editChatName}>{editingChat.name}</Text>
+            )}
+
+            <Text style={styles.sectionLabel}>Visibility</Text>
+            <View style={styles.visibilityOptions}>
+              {VISIBILITY_OPTIONS.map((opt) => {
+                const Icon = opt.icon;
+                const isSelected = editVisibility === opt.value;
+                const color = VISIBILITY_COLORS[opt.value];
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[
+                      styles.visibilityOption,
+                      isSelected && { borderColor: color, backgroundColor: color + '10' },
+                    ]}
+                    onPress={() => setEditVisibility(opt.value)}
+                    activeOpacity={0.7}
+                  >
+                    <Icon size={18} color={isSelected ? color : '#999'} />
+                    <View style={styles.visibilityOptionText}>
+                      <Text style={[styles.visibilityOptionLabel, isSelected && { color, fontWeight: '600' as const }]}>
+                        {opt.label}
+                      </Text>
+                      <Text style={styles.visibilityOptionDesc}>{opt.description}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setEditingChat(null)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={handleSaveVisibility}
+              >
+                <Text style={styles.saveButtonText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -283,15 +459,44 @@ const styles = StyleSheet.create({
   chatInfo: {
     flex: 1,
   },
+  chatNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginBottom: 4,
+  },
   chatName: {
     fontSize: 17,
     fontWeight: '600' as const,
     color: '#000',
-    marginBottom: 4,
+  },
+  visibilityBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  visibilityBadgeText: {
+    fontSize: 11,
+    fontWeight: '600' as const,
   },
   chatMeta: {
     fontSize: 13,
     color: '#999',
+  },
+  chatActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginLeft: 8,
+  },
+  editVisButton: {
+    padding: 4,
+  },
+  editVisButtonText: {
+    fontSize: 13,
+    color: '#007AFF',
+    fontWeight: '500' as const,
   },
   deleteButton: {
     padding: 4,
@@ -361,13 +566,52 @@ const styles = StyleSheet.create({
     color: '#000',
     marginBottom: 16,
   },
+  editChatName: {
+    fontSize: 15,
+    color: '#666',
+    marginBottom: 16,
+    marginTop: -8,
+  },
   modalInput: {
     backgroundColor: '#F5F5F7',
     borderRadius: 12,
     padding: 14,
     fontSize: 16,
     color: '#000',
+    marginBottom: 16,
+  },
+  sectionLabel: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: '#333',
+    marginBottom: 10,
+  },
+  visibilityOptions: {
+    gap: 8,
     marginBottom: 20,
+  },
+  visibilityOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#E5E5E5',
+    backgroundColor: '#F9F9F9',
+  },
+  visibilityOptionText: {
+    flex: 1,
+  },
+  visibilityOptionLabel: {
+    fontSize: 15,
+    fontWeight: '500' as const,
+    color: '#333',
+    marginBottom: 2,
+  },
+  visibilityOptionDesc: {
+    fontSize: 12,
+    color: '#999',
   },
   modalButtons: {
     flexDirection: 'row',
@@ -394,6 +638,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#B0D0FF',
   },
   createButtonText: {
+    fontSize: 16,
+    color: '#FFF',
+    fontWeight: '600' as const,
+  },
+  saveButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#007AFF',
+  },
+  saveButtonText: {
     fontSize: 16,
     color: '#FFF',
     fontWeight: '600' as const,

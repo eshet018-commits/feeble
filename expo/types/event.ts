@@ -91,11 +91,14 @@ export type JoinGroupResult =
   | { success: true; groupId: string; groupName: string; error?: never }
   | { success: false; error: string; groupId?: never; groupName?: never };
 
+export type ChatVisibility = 'open' | 'admin-only' | 'readonly';
+
 export interface Chat {
   id: string;
   groupId: string;
   name: string;
   createdBy: string;
+  visibility: ChatVisibility;
   createdAt: string;
 }
 

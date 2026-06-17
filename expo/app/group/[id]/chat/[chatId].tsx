@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Send, ArrowLeft } from 'lucide-react-native';
+import { Send, ArrowLeft, Shield, MessageSquareX, EyeOff } from 'lucide-react-native';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import { useUser } from '@/contexts/UserContext';
+import { useGroups } from '@/contexts/GroupContext';
 import { useChats } from '@/contexts/ChatContext';
 import { ChatMessage } from '@/types/event';
 
@@ -24,6 +25,7 @@ export default function ChatRoomScreen() {
     chatId: string;
   }>();
   const { userId } = useUser();
+  const { isGroupAdmin } = useGroups();
   const {
     chats,
     subscribeToMessages,
@@ -38,14 +40,21 @@ export default function ChatRoomScreen() {
 
   const chat = chats.find((c) => c.id === chatId);
   const messages = getMessagesForChat(chatId!);
+  const isAdmin = isGroupAdmin(groupId!);
+
+  const visibility = chat?.visibility ?? 'open';
+  const isAdminOnly = visibility === 'admin-only';
+  const isReadonly = visibility === 'readonly';
+  const canView = !isAdminOnly || isAdmin;
+  const canType = visibility === 'open' || (isReadonly && isAdmin) || (isAdminOnly && isAdmin);
 
   useEffect(() => {
-    if (!chatId) return;
+    if (!chatId || !canView) return;
     const unsub = subscribeToMessages(chatId);
     return () => {
       unsub();
     };
-  }, [chatId, subscribeToMessages]);
+  }, [chatId, subscribeToMessages, canView]);
 
   useEffect(() => {
     if (messages.length > 0 && isInitialLoad) {
@@ -134,6 +143,29 @@ export default function ChatRoomScreen() {
     );
   }
 
+  // Non-admin trying to access admin-only chat
+  if (!canView) {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen options={{ title: chat.name, headerLeft: () => null }} />
+        <View style={styles.lockedState}>
+          <EyeOff size={48} color="#FF3B30" strokeWidth={1.5} />
+          <Text style={styles.lockedTitle}>Admin Only</Text>
+          <Text style={styles.lockedSubtitle}>
+            This chat is restricted to group admins.
+          </Text>
+          <TouchableOpacity
+            style={styles.lockedBackButton}
+            onPress={() => router.back()}
+          >
+            <ArrowLeft size={18} color="#007AFF" />
+            <Text style={styles.lockedBackText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -153,6 +185,15 @@ export default function ChatRoomScreen() {
           ),
         }}
       />
+
+      {isReadonly && !isAdmin && (
+        <View style={styles.readonlyBanner}>
+          <MessageSquareX size={14} color="#FFF" />
+          <Text style={styles.readonlyBannerText}>
+            Read-only — only admins can send messages
+          </Text>
+        </View>
+      )}
 
       <FlatList
         ref={flatListRef}
@@ -182,32 +223,41 @@ export default function ChatRoomScreen() {
         }
       />
 
-      <View style={styles.inputBar}>
-        <TextInput
-          style={styles.textInput}
-          value={text}
-          onChangeText={setText}
-          placeholder="Type a message..."
-          placeholderTextColor="#999"
-          multiline
-          maxLength={1000}
-          returnKeyType="default"
-        />
-        <TouchableOpacity
-          style={[
-            styles.sendButton,
-            (!text.trim() || isSending) && styles.sendButtonDisabled,
-          ]}
-          onPress={handleSend}
-          disabled={!text.trim() || isSending}
-          activeOpacity={0.7}
-        >
-          <Send
-            size={18}
-            color={text.trim() && !isSending ? '#FFF' : '#CCC'}
+      {canType ? (
+        <View style={styles.inputBar}>
+          <TextInput
+            style={styles.textInput}
+            value={text}
+            onChangeText={setText}
+            placeholder="Type a message..."
+            placeholderTextColor="#999"
+            multiline
+            maxLength={1000}
+            returnKeyType="default"
           />
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[
+              styles.sendButton,
+              (!text.trim() || isSending) && styles.sendButtonDisabled,
+            ]}
+            onPress={handleSend}
+            disabled={!text.trim() || isSending}
+            activeOpacity={0.7}
+          >
+            <Send
+              size={18}
+              color={text.trim() && !isSending ? '#FFF' : '#CCC'}
+            />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.inputBarLocked}>
+          <Shield size={16} color="#999" />
+          <Text style={styles.inputBarLockedText}>
+            Only admins can send messages in this chat
+          </Text>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -219,6 +269,20 @@ const styles = StyleSheet.create({
   },
   backButton: {
     paddingRight: 8,
+  },
+  readonlyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FF9500',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  readonlyBannerText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: '#FFF',
   },
   messageList: {
     flex: 1,
@@ -317,6 +381,20 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: '#E5E5E5',
   },
+  inputBarLocked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FFF',
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5E5',
+  },
+  inputBarLockedText: {
+    fontSize: 14,
+    color: '#999',
+  },
   loadingState: {
     flex: 1,
     justifyContent: 'center',
@@ -330,5 +408,39 @@ const styles = StyleSheet.create({
   emptyMessagesText: {
     fontSize: 15,
     color: '#999',
+  },
+  lockedState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+    gap: 12,
+  },
+  lockedTitle: {
+    fontSize: 20,
+    fontWeight: '700' as const,
+    color: '#000',
+    marginTop: 4,
+  },
+  lockedSubtitle: {
+    fontSize: 15,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  lockedBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    backgroundColor: '#E8F0FE',
+  },
+  lockedBackText: {
+    fontSize: 15,
+    color: '#007AFF',
+    fontWeight: '600' as const,
   },
 });
