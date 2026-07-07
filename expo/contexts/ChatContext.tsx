@@ -12,6 +12,8 @@ import {
   markChatSeen,
   getChatLastSeen,
   getChatNotifSettings,
+  isNotifSeenSync,
+  markNotifSeen,
 } from '@/utils/notifications';
 import { useNotifications } from './NotificationContext';
 
@@ -58,7 +60,9 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       async (chat, message) => {
         if (message.userId === userId) return; // skip own messages
         if (notifiedMessageIds.current.has(message.id)) return;
+        if (isNotifSeenSync(message.id)) return; // already shown in a previous session
         notifiedMessageIds.current.add(message.id);
+        markNotifSeen(message.id);
         // Add a small cap to avoid unbounded growth.
         if (notifiedMessageIds.current.size > 500) {
           notifiedMessageIds.current = new Set(

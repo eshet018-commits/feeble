@@ -8,6 +8,8 @@ import {
   notifyAnnouncement,
   isAnnouncementSeen,
   markAnnouncementSeen,
+  isNotifSeenSync,
+  markNotifSeen,
 } from '@/utils/notifications';
 import { useNotifications } from './NotificationContext';
 
@@ -52,7 +54,13 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
       const now = Date.now();
       for (const ann of list) {
         if (knownAnnouncementIds.current.has(ann.id)) continue;
+        if (isNotifSeenSync(ann.id)) {
+          // Already shown in a previous session — track it so we don't re-check.
+          knownAnnouncementIds.current.add(ann.id);
+          continue;
+        }
         knownAnnouncementIds.current.add(ann.id);
+        markNotifSeen(ann.id);
         if (knownAnnouncementIds.current.size > 500) {
           knownAnnouncementIds.current = new Set(
             Array.from(knownAnnouncementIds.current).slice(-300),

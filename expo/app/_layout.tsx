@@ -15,6 +15,7 @@ import { trpc, trpcClient } from "@/lib/trpc";
 import {
   registerForPushNotifications,
   setupNotificationTapHandler,
+  loadSeenNotifIds,
 } from "@/utils/notifications";
 
 SplashScreen.preventAutoHideAsync();
@@ -184,6 +185,12 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   useEffect(() => {
+    // Load the persistent seen-notification store before the contexts
+    // wire up their listeners, so already-shown notifications are NOT
+    // re-displayed when re-entering the app.
+    loadSeenNotifIds().catch((e) =>
+      console.warn("[Notifications] Failed to load seen store:", e),
+    );
     SplashScreen.hideAsync();
   }, []);
 

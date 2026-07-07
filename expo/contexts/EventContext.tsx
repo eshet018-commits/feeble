@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Event, Category, ExpandedEvent, Poll, PollOption } from '@/types/event';
 import { DEFAULT_CATEGORIES } from '@/constants/categories';
-import { scheduleEventReminders, cancelEventReminders } from '@/utils/notifications';
+import { scheduleEventReminders, cancelEventReminders, isNotifSeenSync, markNotifSeen } from '@/utils/notifications';
 import { firebaseClient } from '@/lib/firebase-client';
 import { useGroups } from './GroupContext';
 import { useNotifications } from './NotificationContext';
@@ -46,6 +46,8 @@ export const [EventProvider, useEvents] = createContextHook(() => {
           if (knownEventIds.current.size > 500) {
             knownEventIds.current = new Set(Array.from(knownEventIds.current).slice(-300));
           }
+          if (isNotifSeenSync(ev.id)) continue; // already shown in a previous session
+          markNotifSeen(ev.id);
           // Only notify for events created in the last 30 seconds —
           // older ones are history from before this session.
           const createdMs = new Date(ev.createdAt).getTime();

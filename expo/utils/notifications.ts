@@ -26,6 +26,67 @@ const ANN_SEEN_PREFIX = 'ann_seen_';
 const PUSH_TOKEN_KEY = 'expo_push_token';
 
 // ---------------------------------------------------------------------------
+// Persistent "seen notification" store — survives app reloads so banners
+// already shown (or items already viewed) are NOT re-shown on re-entry.
+// Used by the in-app banner listeners in Chat / Announcement / Event contexts.
+// ---------------------------------------------------------------------------
+
+const SEEN_NOTIF_KEY = 'seen_notif_ids';
+const SEEN_CAP = 1000;
+let seenCache: Set<string> | null = null;
+let seenPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Load the persistent seen-IDs set into memory (cached after first load). */
+export async function loadSeenNotifIds(): Promise<Set<string>> {
+  if (seenCache) return seenCache;
+  try {
+    const raw = await AsyncStorage.getItem(SEEN_NOTIF_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw) as string[];
+      seenCache = new Set(arr.slice(-SEEN_CAP));
+    } else {
+      seenCache = new Set();
+    }
+  } catch {
+    seenCache = new Set();
+  }
+  return seenCache;
+}
+
+/** Synchronous check against the in-memory cache (false until loaded). */
+export function isNotifSeenSync(id: string): boolean {
+  return seenCache?.has(id) ?? false;
+}
+
+/** Mark a notification ID as seen and persist (debounced) to AsyncStorage. */
+export function markNotifSeen(id: string): void {
+  if (!seenCache) return;
+  if (seenCache.has(id)) return;
+  seenCache.add(id);
+  if (seenCache.size > SEEN_CAP) {
+    const arr = Array.from(seenCache).slice(-SEEN_CAP);
+    seenCache = new Set(arr);
+  }
+  if (seenPersistTimer) return;
+  seenPersistTimer = setTimeout(async () => {
+    seenPersistTimer = null;
+    if (seenCache) {
+      try {
+        await AsyncStorage.setItem(
+          SEEN_NOTIF_KEY,
+          JSON.stringify(Array.from(seenCache)),
+        );
+      } catch {}
+    }
+  }, 1500);
+}
+
+/** Bulk-mark multiple IDs as seen (e.g. when viewing a screen). */
+export function markManyNotifsSeen(ids: string[]): void {
+  for (const id of ids) markNotifSeen(id);
+}
+
+// ---------------------------------------------------------------------------
 // Notification handler — shown when a notification arrives while the app is
 // in the foreground. We suppress alerts for the chat the user is currently
 // viewing, and respect per-chat settings.
