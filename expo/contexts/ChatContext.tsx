@@ -1,14 +1,32 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useCallback, useState, useEffect, useRef } from 'react';
-import { Chat, ChatMessage, ChatVisibility, ChatFileAttachment } from '@/types/event';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Chat, ChatMessage, ChatVisibility, ChatFileAttachment, ChatSettings } from '@/types/event';
 import { useUser } from './UserContext';
 import { firebaseClient } from '@/lib/firebase-client';
+
+const DEFAULT_CHAT_SETTINGS: ChatSettings = {
+  notificationsEnabled: true,
+  soundEnabled: true,
+  vibrationEnabled: true,
+  showTimestamps: true,
+  showSenderNames: true,
+  enterToSend: false,
+};
+
+const SETTINGS_KEY_PREFIX = 'chat_settings_';
+
+function settingsKey(userId: string | undefined, chatId: string): string {
+  return `${SETTINGS_KEY_PREFIX}${userId ?? 'anon'}_${chatId}`;
+}
 
 export const [ChatProvider, useChats] = createContextHook(() => {
   const { userId, userName } = useUser();
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [chatSettings, setChatSettings] = useState<Record<string, ChatSettings>>({});
+  const [settingsLoading, setSettingsLoading] = useState<Record<string, boolean>>({});
   const unsubscribeRefs = useRef<Record<string, (() => void) | undefined>>({});
 
   useEffect(() => {
@@ -96,10 +114,49 @@ export const [ChatProvider, useChats] = createContextHook(() => {
     [messages]
   );
 
+  const loadChatSettings = useCallback(
+    async (chatId: string): Promise<ChatSettings> => {
+      if (!userId) return DEFAULT_CHAT_SETTINGS;
+      const key = settingsKey(userId, chatId);
+      try {
+        const raw = await AsyncStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw) as Partial<ChatSettings>;
+          const merged: ChatSettings = { ...DEFAULT_CHAT_SETTINGS, ...parsed };
+          setChatSettings((prev) => ({ ...prev, [chatId]: merged }));
+          return merged;
+        }
+      } catch (e) {
+        console.warn('[Chat] Failed to load settings:', e);
+      }
+      setChatSettings((prev) => ({ ...prev, [chatId]: DEFAULT_CHAT_SETTINGS }));
+      return DEFAULT_CHAT_SETTINGS;
+    },
+    [userId]
+  );
+
+  const updateChatSettings = useCallback(
+    async (chatId: string, updates: Partial<ChatSettings>): Promise<void> => {
+      if (!userId) return;
+      const current = chatSettings[chatId] ?? DEFAULT_CHAT_SETTINGS;
+      const next: ChatSettings = { ...current, ...updates };
+      setChatSettings((prev) => ({ ...prev, [chatId]: next }));
+      const key = settingsKey(userId, chatId);
+      try {
+        await AsyncStorage.setItem(key, JSON.stringify(next));
+      } catch (e) {
+        console.warn('[Chat] Failed to save settings:', e);
+      }
+    },
+    [userId, chatSettings]
+  );
+
   return {
     chats,
     messages,
     activeChatId,
+    chatSettings,
+    settingsLoading,
     subscribeToChats,
     subscribeToMessages,
     createChat,
@@ -108,5 +165,7 @@ export const [ChatProvider, useChats] = createContextHook(() => {
     sendMessage,
     sendFileMessage,
     getMessagesForChat,
+    loadChatSettings,
+    updateChatSettings,
   };
 });

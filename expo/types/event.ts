@@ -93,6 +93,18 @@ export type JoinGroupResult =
 
 export type ChatVisibility = 'open' | 'admin-only' | 'readonly';
 
+/**
+ * Per-chat, per-user settings stored locally on the device.
+ */
+export interface ChatSettings {
+  notificationsEnabled: boolean;
+  soundEnabled: boolean;
+  vibrationEnabled: boolean;
+  showTimestamps: boolean;
+  showSenderNames: boolean;
+  enterToSend: boolean;
+}
+
 export interface Chat {
   id: string;
   groupId: string;

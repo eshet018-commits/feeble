@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Send, ArrowLeft, Shield, MessageSquareX, EyeOff, File as FileIcon, Download, CornerUpLeft, X } from 'lucide-react-native';
+import { Send, ArrowLeft, Shield, MessageSquareX, EyeOff, File as FileIcon, Download, CornerUpLeft, X, Settings as SettingsIcon, Bell, Volume2, Vibrate, Clock, User, CornerDownLeft, Trash2 } from 'lucide-react-native';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View,
@@ -14,11 +14,14 @@ import {
   Alert,
   Linking,
   Image as RNImage,
+  Modal,
+  Switch,
+  ScrollView,
 } from 'react-native';
 import { useUser } from '@/contexts/UserContext';
 import { useGroups } from '@/contexts/GroupContext';
 import { useChats } from '@/contexts/ChatContext';
-import { ChatMessage, ChatFileAttachment, ChatReplyInfo } from '@/types/event';
+import { ChatMessage, ChatFileAttachment, ChatReplyInfo, ChatSettings } from '@/types/event';
 
 export default function ChatRoomScreen() {
   const router = useRouter();
@@ -33,23 +36,40 @@ export default function ChatRoomScreen() {
     subscribeToMessages,
     sendMessage,
     getMessagesForChat,
+    chatSettings,
+    loadChatSettings,
+    updateChatSettings,
   } = useChats();
 
   const [text, setText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [replyTo, setReplyTo] = useState<ChatReplyInfo | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const flatListRef = useRef<FlatList<ChatMessage>>(null);
 
   const chat = chats.find((c) => c.id === chatId);
   const messages = getMessagesForChat(chatId!);
   const isAdmin = isGroupAdmin(groupId!);
+  const settings: ChatSettings = chatSettings[chatId!] ?? {
+    notificationsEnabled: true,
+    soundEnabled: true,
+    vibrationEnabled: true,
+    showTimestamps: true,
+    showSenderNames: true,
+    enterToSend: false,
+  };
 
   const visibility = chat?.visibility ?? 'open';
   const isAdminOnly = visibility === 'admin-only';
   const isReadonly = visibility === 'readonly';
   const canView = !isAdminOnly || isAdmin;
   const canType = visibility === 'open' || (isReadonly && isAdmin) || (isAdminOnly && isAdmin);
+
+  useEffect(() => {
+    if (!chatId) return;
+    loadChatSettings(chatId).catch(() => {});
+  }, [chatId, loadChatSettings]);
 
   useEffect(() => {
     if (!chatId || !canView) return;
@@ -222,6 +242,38 @@ export default function ChatRoomScreen() {
     );
   };
 
+  const renderSettingRow = ({
+    icon: Icon,
+    color,
+    label,
+    description,
+    value,
+    onToggle,
+  }: {
+    icon: typeof Bell;
+    color: string;
+    label: string;
+    description: string;
+    value: boolean;
+    onToggle: (v: boolean) => void;
+  }) => (
+    <View style={styles.settingRow}>
+      <View style={[styles.settingIcon, { backgroundColor: color + '18' }]}>
+        <Icon size={18} color={color} />
+      </View>
+      <View style={styles.settingText}>
+        <Text style={styles.settingLabel}>{label}</Text>
+        <Text style={styles.settingDescription}>{description}</Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onToggle}
+        trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+        ios_backgroundColor="#E5E5EA"
+      />
+    </View>
+  );
+
   const renderMessage = ({ item }: { item: ChatMessage }) => {
     const isMine = item.userId === userId;
     const hasText = !!(item.text && item.text.trim());
@@ -238,7 +290,7 @@ export default function ChatRoomScreen() {
           isMine ? styles.messageRowMine : styles.messageRowTheirs,
         ]}
       >
-        {!isMine && (
+        {!isMine && settings.showSenderNames && (
           <Text style={styles.messageAuthor}>{item.userName}</Text>
         )}
         <View
@@ -266,6 +318,7 @@ export default function ChatRoomScreen() {
           style={[
             styles.messageMetaRow,
             isMine ? styles.messageMetaRowMine : styles.messageMetaRowTheirs,
+            !settings.showTimestamps && { display: 'none' },
           ]}
         >
           <Text
@@ -348,6 +401,15 @@ export default function ChatRoomScreen() {
               <ArrowLeft size={22} color="#007AFF" />
             </TouchableOpacity>
           ),
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() => setShowSettings(true)}
+              style={styles.headerButton}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <SettingsIcon size={22} color="#007AFF" />
+            </TouchableOpacity>
+          ),
         }}
       />
 
@@ -426,7 +488,9 @@ export default function ChatRoomScreen() {
               placeholderTextColor="#999"
               multiline
               maxLength={1000}
-              returnKeyType="default"
+              returnKeyType={settings.enterToSend ? 'send' : 'default'}
+              blurOnSubmit={!settings.enterToSend}
+              onSubmitEditing={settings.enterToSend ? handleSend : undefined}
             />
             <TouchableOpacity
               style={[
@@ -456,9 +520,107 @@ export default function ChatRoomScreen() {
           </Text>
         </View>
       )}
+
+      {/* Chat Settings Modal */}
+      <Modal
+        visible={showSettings}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowSettings(false)}
+      >
+        <View style={styles.settingsOverlay}>
+          <TouchableOpacity
+            style={styles.settingsBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowSettings(false)}
+          />
+          <View style={styles.settingsSheet}>
+            <View style={styles.settingsHandle} />
+            <Text style={styles.settingsTitle}>Chat Settings</Text>
+            <Text style={styles.settingsChatName}>{chat.name}</Text>
+
+            <ScrollView
+              style={styles.settingsScrollView}
+              contentContainerStyle={styles.settingsScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={settingsSectionLabel}>Notifications</Text>
+              {renderSettingRow({
+                icon: Bell,
+                color: '#FF3B30',
+                label: 'Notifications',
+                description: 'Get notified about new messages',
+                value: settings.notificationsEnabled,
+                onToggle: (v) => updateChatSettings(chatId!, { notificationsEnabled: v }),
+              })}
+              {renderSettingRow({
+                icon: Volume2,
+                color: '#007AFF',
+                label: 'Sound',
+                description: 'Play a sound for new messages',
+                value: settings.soundEnabled,
+                onToggle: (v) => updateChatSettings(chatId!, { soundEnabled: v }),
+              })}
+              {renderSettingRow({
+                icon: Vibrate,
+                color: '#5856D6',
+                label: 'Vibration',
+                description: 'Vibrate when a message arrives',
+                value: settings.vibrationEnabled,
+                onToggle: (v) => updateChatSettings(chatId!, { vibrationEnabled: v }),
+              })}
+
+              <Text style={settingsSectionLabel}>Appearance</Text>
+              {renderSettingRow({
+                icon: Clock,
+                color: '#34C759',
+                label: 'Show Timestamps',
+                description: 'Display the time under each message',
+                value: settings.showTimestamps,
+                onToggle: (v) => updateChatSettings(chatId!, { showTimestamps: v }),
+              })}
+              {renderSettingRow({
+                icon: User,
+                color: '#FF9500',
+                label: 'Show Sender Names',
+                description: 'Display who sent each message',
+                value: settings.showSenderNames,
+                onToggle: (v) => updateChatSettings(chatId!, { showSenderNames: v }),
+              })}
+
+              <Text style={settingsSectionLabel}>Input</Text>
+              {renderSettingRow({
+                icon: CornerDownLeft,
+                color: '#5AC8FA',
+                label: 'Enter to Send',
+                description: 'Press Enter to send instead of adding a new line',
+                value: settings.enterToSend,
+                onToggle: (v) => updateChatSettings(chatId!, { enterToSend: v }),
+              })}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.settingsDoneButton}
+              onPress={() => setShowSettings(false)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.settingsDoneText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
+
+const settingsSectionLabel = {
+  fontSize: 13,
+  fontWeight: '600' as const,
+  color: '#8E8E93',
+  textTransform: 'uppercase' as const,
+  marginBottom: 8,
+  marginTop: 18,
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -467,6 +629,9 @@ const styles = StyleSheet.create({
   },
   backButton: {
     paddingRight: 8,
+  },
+  headerButton: {
+    paddingHorizontal: 8,
   },
   readonlyBanner: {
     flexDirection: 'row',
@@ -867,5 +1032,86 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#007AFF',
     fontWeight: '600' as const,
+  },
+  settingsOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  settingsBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  settingsSheet: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 34,
+    maxHeight: '85%',
+  },
+  settingsHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#E0E0E0',
+    alignSelf: 'center',
+    marginBottom: 12,
+  },
+  settingsTitle: {
+    fontSize: 22,
+    fontWeight: '700' as const,
+    color: '#000',
+    textAlign: 'center',
+  },
+  settingsChatName: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  settingsScrollView: {
+    marginTop: 4,
+  },
+  settingsScrollContent: {
+    paddingBottom: 16,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 12,
+  },
+  settingIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingText: {
+    flex: 1,
+  },
+  settingLabel: {
+    fontSize: 16,
+    fontWeight: '500' as const,
+    color: '#000',
+  },
+  settingDescription: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  settingsDoneButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  settingsDoneText: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: '#FFF',
   },
 });
