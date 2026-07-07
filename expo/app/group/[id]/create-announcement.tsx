@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Megaphone, Clock, Send } from 'lucide-react-native';
+import { Megaphone, Clock, Send, BarChart3, Plus, X } from 'lucide-react-native';
 import React, { useState } from 'react';
 import {
   View,
@@ -39,6 +39,25 @@ export default function CreateAnnouncementScreen() {
   const [body, setBody] = useState('');
   const [durationHours, setDurationHours] = useState<AnnouncementDuration>(168);
 
+  // Poll builder state
+  const [pollEnabled, setPollEnabled] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+
+  const updatePollOption = (index: number, value: string) => {
+    setPollOptions((prev) => prev.map((o, i) => (i === index ? value : o)));
+  };
+
+  const addPollOption = () => {
+    if (pollOptions.length >= 6) return;
+    setPollOptions((prev) => [...prev, '']);
+  };
+
+  const removePollOption = (index: number) => {
+    if (pollOptions.length <= 2) return;
+    setPollOptions((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const group = id ? getGroupById(id) : null;
   const admin = id ? isGroupAdmin(id) : false;
 
@@ -63,6 +82,21 @@ export default function CreateAnnouncementScreen() {
     }
     if (!userId || !id) return;
 
+    // Validate poll if enabled.
+    let pollInput: { question: string; options: string[] } | undefined;
+    if (pollEnabled) {
+      const cleanOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
+      if (!pollQuestion.trim()) {
+        Alert.alert('Poll question required', 'Add a question for your poll, or turn the poll off.');
+        return;
+      }
+      if (cleanOptions.length < 2) {
+        Alert.alert('Need at least 2 options', 'A poll needs at least two choices.');
+        return;
+      }
+      pollInput = { question: pollQuestion.trim(), options: cleanOptions };
+    }
+
     try {
       await createAnnouncement({
         groupId: id,
@@ -71,6 +105,7 @@ export default function CreateAnnouncementScreen() {
         createdBy: userId,
         createdByName: userName || 'Admin',
         durationHours,
+        poll: pollInput,
       });
       router.back();
     } catch (e: any) {
@@ -146,6 +181,72 @@ export default function CreateAnnouncementScreen() {
             );
           })}
         </View>
+
+        {/* Poll builder */}
+        <View style={styles.sectionHeader}>
+          <BarChart3 size={16} color="#666" />
+          <Text style={styles.sectionTitle}>Poll</Text>
+        </View>
+        <Text style={styles.sectionHint}>
+          Attach a poll so members can vote directly on this announcement.
+        </Text>
+
+        <TouchableOpacity
+          style={[styles.pollToggle, pollEnabled && styles.pollToggleActive]}
+          onPress={() => setPollEnabled((v) => !v)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.pollToggleCircle, pollEnabled && styles.pollToggleCircleActive]}>
+            {pollEnabled && <View style={styles.pollToggleDot} />}
+          </View>
+          <Text style={[styles.pollToggleLabel, pollEnabled && styles.pollToggleLabelActive]}>
+            {pollEnabled ? 'Poll attached' : 'Add a poll'}
+          </Text>
+        </TouchableOpacity>
+
+        {pollEnabled && (
+          <View style={styles.pollBuilder}>
+            <TextInput
+              style={styles.pollQuestionInput}
+              value={pollQuestion}
+              onChangeText={setPollQuestion}
+              placeholder="Poll question"
+              placeholderTextColor="#B0B0B0"
+              maxLength={120}
+            />
+            <Text style={styles.pollOptionsLabel}>Options</Text>
+            {pollOptions.map((opt, i) => (
+              <View key={i} style={styles.pollOptionRow}>
+                <TextInput
+                  style={styles.pollOptionInput}
+                  value={opt}
+                  onChangeText={(v) => updatePollOption(i, v)}
+                  placeholder={`Option ${i + 1}`}
+                  placeholderTextColor="#B0B0B0"
+                  maxLength={80}
+                />
+                {pollOptions.length > 2 && (
+                  <TouchableOpacity
+                    onPress={() => removePollOption(i)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <X size={18} color="#FF3B30" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+            {pollOptions.length < 6 && (
+              <TouchableOpacity
+                style={styles.addOptionButton}
+                onPress={addPollOption}
+                activeOpacity={0.7}
+              >
+                <Plus size={16} color="#007AFF" />
+                <Text style={styles.addOptionText}>Add option</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.footer}>
@@ -245,4 +346,81 @@ const styles = StyleSheet.create({
   accessDenied: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40, backgroundColor: '#F5F5F7' },
   accessDeniedTitle: { fontSize: 22, fontWeight: '700' as const, color: '#000', marginTop: 16, marginBottom: 6 },
   accessDeniedText: { fontSize: 15, color: '#666', textAlign: 'center' },
+  pollToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#E5E5E5',
+    marginBottom: 12,
+  },
+  pollToggleActive: { borderColor: '#007AFF', backgroundColor: '#F0F7FF' },
+  pollToggleCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#CCC',
+    backgroundColor: '#FFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pollToggleCircleActive: { borderColor: '#007AFF', backgroundColor: '#007AFF' },
+  pollToggleDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FFF' },
+  pollToggleLabel: { fontSize: 15, fontWeight: '600' as const, color: '#333' },
+  pollToggleLabelActive: { color: '#007AFF' },
+  pollBuilder: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#E5E5E5',
+    marginBottom: 24,
+  },
+  pollQuestionInput: {
+    backgroundColor: '#F8F8F8',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#000',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#EAEAEA',
+  },
+  pollOptionsLabel: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: '#666',
+    marginBottom: 8,
+    marginLeft: 2,
+  },
+  pollOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  pollOptionInput: {
+    flex: 1,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#000',
+    borderWidth: 1,
+    borderColor: '#EAEAEA',
+  },
+  addOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  addOptionText: { fontSize: 15, fontWeight: '600' as const, color: '#007AFF' },
 });

@@ -12,7 +12,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage, uploadString, StringFormat } from 'firebase/storage';
-import { Event, Poll, PollOption, Chat, ChatMessage, ChatVisibility, ChatFileAttachment, Announcement, AnnouncementDuration } from '@/types/event';
+import { Event, Poll, PollOption, Chat, ChatMessage, ChatVisibility, ChatFileAttachment, Announcement, AnnouncementDuration, AnnouncementPollInput, AnnouncementPoll } from '@/types/event';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -622,6 +622,7 @@ export const firebaseClient = {
     createdBy: string;
     createdByName: string;
     durationHours: AnnouncementDuration;
+    poll?: AnnouncementPollInput;
   }): Promise<Announcement> {
     const id = `ann_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const now = new Date();
@@ -630,6 +631,17 @@ export const firebaseClient = {
     let expiresAt: string | undefined;
     if (data.durationHours > 0) {
       expiresAt = new Date(now.getTime() + data.durationHours * 60 * 60 * 1000).toISOString();
+    }
+
+    let poll: AnnouncementPoll | undefined;
+    if (data.poll && data.poll.options.filter((o) => o.trim()).length >= 2) {
+      poll = {
+        question: data.poll.question.trim(),
+        options: data.poll.options
+          .map((text, i) => ({ id: `opt_${i}`, text: text.trim() }))
+          .filter((o) => o.text),
+        votes: {},
+      };
     }
 
     const announcement: Announcement = {
@@ -642,6 +654,7 @@ export const firebaseClient = {
       createdAt,
       durationHours: data.durationHours,
       ...(expiresAt ? { expiresAt } : {}),
+      ...(poll ? { poll } : {}),
     };
 
     await set(ref(database, `announcements/${id}`), announcement);
@@ -668,6 +681,13 @@ export const firebaseClient = {
 
   async deleteAnnouncement(id: string): Promise<void> {
     await remove(ref(database, `announcements/${id}`));
+  },
+
+  /**
+   * Cast or change a user's vote on an announcement poll. Each user gets one vote.
+   */
+  async voteOnAnnouncementPoll(announcementId: string, userId: string, optionId: string): Promise<void> {
+    await set(ref(database, `announcements/${announcementId}/poll/votes/${userId}`), optionId);
   },
 
   /**

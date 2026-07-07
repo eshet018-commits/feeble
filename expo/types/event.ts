@@ -63,6 +63,19 @@ export interface Poll {
   votes: Record<string, string>;
 }
 
+/** Poll attached to an announcement. `votes` maps userId -> optionId. */
+export interface AnnouncementPoll {
+  question: string;
+  options: PollOption[];
+  votes: Record<string, string>;
+}
+
+/** Input used when an admin creates an announcement poll. */
+export interface AnnouncementPollInput {
+  question: string;
+  options: string[];
+}
+
 export interface Event {
   id: string;
   groupId: string;
@@ -157,4 +170,6 @@ export interface Announcement {
   durationHours: AnnouncementDuration;
   /** ISO timestamp when the announcement should auto-hide. Undefined when it never expires. */
   expiresAt?: string;
+  /** Optional poll attached to the announcement. */
+  poll?: AnnouncementPoll;
 }

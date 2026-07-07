@@ -1,6 +1,6 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useCallback, useEffect, useState } from 'react';
-import { Announcement, AnnouncementDuration } from '@/types/event';
+import { Announcement, AnnouncementDuration, AnnouncementPollInput } from '@/types/event';
 import { firebaseClient } from '@/lib/firebase-client';
 
 /**
@@ -36,6 +36,7 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
       createdBy: string;
       createdByName: string;
       durationHours: AnnouncementDuration;
+      poll?: AnnouncementPollInput;
     }) => {
       setIsCreating(true);
       try {
@@ -58,6 +59,13 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
     await firebaseClient.deleteAnnouncement(id);
   }, []);
 
+  const voteOnAnnouncementPoll = useCallback(
+    async (announcementId: string, userId: string, optionId: string) => {
+      await firebaseClient.voteOnAnnouncementPoll(announcementId, userId, optionId);
+    },
+    [],
+  );
+
   const getAnnouncementsForGroup = useCallback(
     (groupId: string) => announcements.filter((a) => a.groupId === groupId),
     [announcements],
@@ -71,6 +79,7 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
     createAnnouncement,
     updateAnnouncement,
     deleteAnnouncement,
+    voteOnAnnouncementPoll,
     getAnnouncementsForGroup,
   };
 });
