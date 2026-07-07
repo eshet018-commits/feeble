@@ -470,47 +470,64 @@ export const firebaseClient = {
       throw new Error('Firebase Storage is not configured. Please set EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET in your environment variables.');
     }
 
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const timestamp = Date.now();
-    const fileName = `${timestamp}_${safeName}`;
-    const filePath = `chats/${chatId}/${fileName}`;
-    const fileRef = storageRef(storage, filePath);
+    try {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const timestamp = Date.now();
+      const fileName = `${timestamp}_${safeName}`;
+      const filePath = `chats/${chatId}/${fileName}`;
+      const fileRef = storageRef(storage, filePath);
 
-    const metadata = {
-      contentType: file.mimeType || 'application/octet-stream',
-      customMetadata: {
-        chatId,
-        userId,
-        uploadedAt: new Date().toISOString(),
-        originalName: file.name,
-      },
-    };
+      const metadata = {
+        contentType: file.mimeType || 'application/octet-stream',
+        customMetadata: {
+          chatId,
+          userId,
+          uploadedAt: new Date().toISOString(),
+          originalName: file.name,
+        },
+      };
 
-    // Images: fetch -> blob -> uploadBytes. Text-like files: read -> uploadString.
-    const isImage = (file.mimeType || '').startsWith('image/');
-    const isTextLike = (file.mimeType || '').startsWith('text/') || file.name.endsWith('.json') || file.name.endsWith('.csv') || file.name.endsWith('.xml');
+      // Images: fetch -> blob -> uploadBytes. Text-like files: read -> uploadString.
+      const isImage = (file.mimeType || '').startsWith('image/');
+      const isTextLike = (file.mimeType || '').startsWith('text/') || file.name.endsWith('.json') || file.name.endsWith('.csv') || file.name.endsWith('.xml');
 
-    if (isImage || (!isTextLike && Platform.OS !== 'web')) {
-      const response = await fetch(file.uri);
-      const blob = await response.blob();
-      await uploadBytes(fileRef, blob, metadata);
-    } else if (isTextLike && Platform.OS === 'web') {
-      const textRes = await fetch(file.uri);
-      const text = await textRes.text();
-      await uploadString(fileRef, text, StringFormat.RAW, metadata);
-    } else {
-      const response = await fetch(file.uri);
-      const blob = await response.blob();
-      await uploadBytes(fileRef, blob, metadata);
+      if (isImage || (!isTextLike && Platform.OS !== 'web')) {
+        const response = await fetch(file.uri);
+        const blob = await response.blob();
+        await uploadBytes(fileRef, blob, metadata);
+      } else if (isTextLike && Platform.OS === 'web') {
+        const textRes = await fetch(file.uri);
+        const text = await textRes.text();
+        await uploadString(fileRef, text, StringFormat.RAW, metadata);
+      } else {
+        const response = await fetch(file.uri);
+        const blob = await response.blob();
+        await uploadBytes(fileRef, blob, metadata);
+      }
+
+      const url = await getDownloadURL(fileRef);
+      return {
+        name: file.name,
+        url,
+        type: file.mimeType || 'application/octet-stream',
+        size: file.size,
+      };
+    } catch (error: any) {
+      console.error('[Firebase] Chat attachment upload error:', {
+        code: error.code,
+        message: error.message,
+        serverResponse: error.serverResponse,
+        bucket: firebaseConfig.storageBucket,
+      });
+      // Surface the server response so the real cause is visible.
+      const serverHint = error.serverResponse ? ` (Server: ${error.serverResponse})` : '';
+      if (error.code === 'storage/unauthorized' || error.code === 'storage/unknown') {
+        throw new Error(
+          `Upload failed (${error.code}). Open Firebase Console → Storage and click "Get started" to provision the bucket, then check the security rules allow authenticated writes.${serverHint}`
+        );
+      }
+      throw new Error(error.message || 'Upload failed' + serverHint);
     }
-
-    const url = await getDownloadURL(fileRef);
-    return {
-      name: file.name,
-      url,
-      type: file.mimeType || 'application/octet-stream',
-      size: file.size,
-    };
   },
 
   async sendFileMessage(chatId: string, userId: string, userName: string, attachment: ChatFileAttachment, text: string = '', replyTo?: { messageId: string; userName: string; text: string }): Promise<ChatMessage> {
