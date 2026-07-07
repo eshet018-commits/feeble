@@ -546,16 +546,61 @@ export const firebaseClient = {
     return message;
   },
 
+  /**
+   * Permanently deletes messages older than the retention window from the database.
+   * Runs lazily when a chat is opened so no server functions are required.
+   * @param chatId Chat to clean up
+   * @param retentionDays Messages older than this many days are removed (default 7)
+   */
+  async cleanupOldMessages(chatId: string, retentionDays: number = 7): Promise<void> {
+    try {
+      const messagesRef = ref(database, `chats/${chatId}/messages`);
+      const snapshot = await get(messagesRef);
+      if (!snapshot.exists()) return;
+
+      const now = Date.now();
+      const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
+      const messagesData = snapshot.val() as Record<string, ChatMessage>;
+
+      const staleIds = Object.entries(messagesData)
+        .filter(([, msg]) => {
+          const ts = new Date(msg.createdAt).getTime();
+          return isNaN(ts) || ts < cutoff;
+        })
+        .map(([key]) => key);
+
+      if (staleIds.length === 0) return;
+
+      const updates: Record<string, null> = {};
+      staleIds.forEach((id) => {
+        updates[`chats/${chatId}/messages/${id}`] = null;
+      });
+      await update(ref(database), updates);
+      console.log(`[Firebase] Deleted ${staleIds.length} expired message(s) from chat ${chatId}`);
+    } catch (error) {
+      console.warn('[Firebase] Message cleanup failed:', error);
+    }
+  },
+
   subscribeToMessages(chatId: string, callback: (messages: ChatMessage[]) => void) {
     const messagesRef = ref(database, `chats/${chatId}/messages`);
+    const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+    // Lazily purge expired messages whenever a client opens the chat.
+    this.cleanupOldMessages(chatId).catch(() => { /* errors are logged inside */ });
 
     onValue(messagesRef, (snapshot) => {
       if (!snapshot.exists()) {
         callback([]);
         return;
       }
-      const messagesData = snapshot.val();
-      const messages: ChatMessage[] = Object.values(messagesData);
+      const messagesData = snapshot.val() as Record<string, ChatMessage>;
+      const now = Date.now();
+      const messages: ChatMessage[] = Object.values(messagesData)
+        .filter((msg) => {
+          const ts = new Date(msg.createdAt).getTime();
+          return !isNaN(ts) && now - ts < RETENTION_MS;
+        });
       messages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
       callback(messages);
     });

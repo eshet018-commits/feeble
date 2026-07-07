@@ -360,6 +360,12 @@ export default function ChatRoomScreen() {
         </View>
       )}
 
+      <View style={styles.retentionBanner}>
+        <Text style={styles.retentionBannerText}>
+          Messages are kept for 7 days and then permanently deleted.
+        </Text>
+      </View>
+
       <FlatList
         ref={flatListRef}
         data={messages}
@@ -475,6 +481,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600' as const,
     color: '#FFF',
+  },
+  retentionBanner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F2F2F7',
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
+  retentionBannerText: {
+    fontSize: 11,
+    color: '#8E8E93',
+    textAlign: 'center',
   },
   messageList: {
     flex: 1,
