@@ -137,3 +137,24 @@ export interface ChatMessage {
   attachment?: ChatFileAttachment;
   replyTo?: ChatReplyInfo;
 }
+
+/**
+ * Predefined visibility durations for an announcement (in hours).
+ * `0` means the announcement never auto-expires.
+ */
+export type AnnouncementDuration = 0 | 6 | 24 | 72 | 168 | 720;
+
+export interface Announcement {
+  id: string;
+  groupId: string;
+  title: string;
+  body: string;
+  createdBy: string;
+  createdByName: string;
+  /** ISO timestamp the announcement was created. */
+  createdAt: string;
+  /** Visibility duration in hours. `0` = never expires. */
+  durationHours: AnnouncementDuration;
+  /** ISO timestamp when the announcement should auto-hide. Undefined when it never expires. */
+  expiresAt?: string;
+}

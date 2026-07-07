@@ -8,6 +8,7 @@ import { UserProvider } from "@/contexts/UserContext";
 import { GroupProvider } from "@/contexts/GroupContext";
 import { OnboardingProvider } from "@/contexts/OnboardingContext";
 import { ChatProvider } from "@/contexts/ChatContext";
+import { AnnouncementProvider } from "@/contexts/AnnouncementContext";
 import { trpc, trpcClient } from "@/lib/trpc";
 
 SplashScreen.preventAutoHideAsync();
@@ -128,6 +129,14 @@ function RootLayoutNav() {
           presentation: "card"
         }} 
       />
+      <Stack.Screen 
+        name="group/[id]/create-announcement" 
+        options={{ 
+          headerShown: true,
+          title: "New Announcement",
+          presentation: "modal"
+        }} 
+      />
     </Stack>
   );
 }
@@ -145,9 +154,11 @@ export default function RootLayout() {
             <OnboardingProvider>
               <GroupProvider>
                 <ChatProvider>
-                  <EventProvider>
-                    <RootLayoutNav />
-                  </EventProvider>
+                  <AnnouncementProvider>
+                    <EventProvider>
+                      <RootLayoutNav />
+                    </EventProvider>
+                  </AnnouncementProvider>
                 </ChatProvider>
               </GroupProvider>
             </OnboardingProvider>

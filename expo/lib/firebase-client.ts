@@ -12,7 +12,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage, uploadString, StringFormat } from 'firebase/storage';
-import { Event, Poll, PollOption, Chat, ChatMessage, ChatVisibility, ChatFileAttachment } from '@/types/event';
+import { Event, Poll, PollOption, Chat, ChatMessage, ChatVisibility, ChatFileAttachment, Announcement, AnnouncementDuration } from '@/types/event';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -606,5 +606,131 @@ export const firebaseClient = {
     });
 
     return () => off(messagesRef);
+  },
+
+  // ---------------------------------------------------------------------------
+  // Announcements
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create an announcement for a group. Only admins should call this.
+   */
+  async createAnnouncement(data: {
+    groupId: string;
+    title: string;
+    body: string;
+    createdBy: string;
+    createdByName: string;
+    durationHours: AnnouncementDuration;
+  }): Promise<Announcement> {
+    const id = `ann_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const now = new Date();
+    const createdAt = now.toISOString();
+
+    let expiresAt: string | undefined;
+    if (data.durationHours > 0) {
+      expiresAt = new Date(now.getTime() + data.durationHours * 60 * 60 * 1000).toISOString();
+    }
+
+    const announcement: Announcement = {
+      id,
+      groupId: data.groupId,
+      title: data.title,
+      body: data.body,
+      createdBy: data.createdBy,
+      createdByName: data.createdByName,
+      createdAt,
+      durationHours: data.durationHours,
+      ...(expiresAt ? { expiresAt } : {}),
+    };
+
+    await set(ref(database, `announcements/${id}`), announcement);
+    return announcement;
+  },
+
+  /**
+   * Update an existing announcement (title, body, and/or duration).
+   */
+  async updateAnnouncement(id: string, updates: Partial<Pick<Announcement, 'title' | 'body' | 'durationHours'>>): Promise<void> {
+    const updateData: Record<string, unknown> = {};
+    if (updates.title !== undefined) updateData.title = updates.title;
+    if (updates.body !== undefined) updateData.body = updates.body;
+    if (updates.durationHours !== undefined) {
+      updateData.durationHours = updates.durationHours;
+      if (updates.durationHours > 0) {
+        updateData.expiresAt = new Date(Date.now() + updates.durationHours * 60 * 60 * 1000).toISOString();
+      } else {
+        updateData.expiresAt = null;
+      }
+    }
+    await update(ref(database, `announcements/${id}`), updateData);
+  },
+
+  async deleteAnnouncement(id: string): Promise<void> {
+    await remove(ref(database, `announcements/${id}`));
+  },
+
+  /**
+   * Subscribe to all announcements for a group. Expired announcements are
+   * lazily pruned and excluded from the callback.
+   */
+  subscribeToAnnouncements(groupId: string, callback: (announcements: Announcement[]) => void) {
+    const annRef = ref(database, 'announcements');
+
+    // Lazily delete expired announcements on subscribe.
+    this.cleanupExpiredAnnouncements(groupId).catch(() => { /* logged inside */ });
+
+    onValue(annRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        callback([]);
+        return;
+      }
+      const now = Date.now();
+      const all = snapshot.val() as Record<string, Announcement>;
+      const list = Object.values(all)
+        .filter((a) => a.groupId === groupId)
+        .filter((a) => {
+          if (!a.expiresAt) return true;
+          const ts = new Date(a.expiresAt).getTime();
+          return !isNaN(ts) && ts > now;
+        });
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(list);
+    });
+
+    return () => off(annRef);
+  },
+
+  /**
+   * Permanently delete expired announcements for a group from the database.
+   */
+  async cleanupExpiredAnnouncements(groupId: string): Promise<void> {
+    try {
+      const annRef = ref(database, 'announcements');
+      const snapshot = await get(annRef);
+      if (!snapshot.exists()) return;
+
+      const now = Date.now();
+      const all = snapshot.val() as Record<string, Announcement>;
+      const staleIds = Object.entries(all)
+        .filter(([, a]) => a.groupId === groupId)
+        .filter(([, a]) => {
+          if (!a.expiresAt) return false;
+          const ts = new Date(a.expiresAt).getTime();
+          return !isNaN(ts) && ts <= now;
+        })
+        .map(([key]) => key);
+
+      if (staleIds.length === 0) return;
+
+      const updates: Record<string, null> = {};
+      staleIds.forEach((aid) => {
+        updates[`announcements/${aid}`] = null;
+      });
+      await update(ref(database), updates);
+      console.log(`[Firebase] Deleted ${staleIds.length} expired announcement(s) in group ${groupId}`);
+    } catch (error) {
+      console.warn('[Firebase] Announcement cleanup failed:', error);
+    }
   },
 };

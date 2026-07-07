@@ -1,6 +1,6 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Calendar, Plus, Users, Settings, Repeat, UserPlus, LogOut, Zap, MessageCircle } from 'lucide-react-native';
-import React, { useEffect, useMemo, useRef } from 'react';
+import { Calendar, Plus, Users, Settings, Repeat, UserPlus, LogOut, Zap, MessageCircle, Megaphone, Clock, Trash2 } from 'lucide-react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,46 @@ import {
   TouchableOpacity,
   Alert,
   Animated,
+  LayoutAnimation,
+  Platform,
 } from 'react-native';
 
 import { useGroups } from '@/contexts/GroupContext';
 import { useEvents } from '@/contexts/EventContext';
-import { ExpandedEvent } from '@/types/event';
+import { useAnnouncements } from '@/contexts/AnnouncementContext';
+import { ExpandedEvent, Announcement, AnnouncementDuration } from '@/types/event';
+
+type Tab = 'events' | 'announcements';
+
+const DURATION_LABELS: Record<AnnouncementDuration, string> = {
+  0: 'Never expires',
+  6: '6h',
+  24: '1d',
+  72: '3d',
+  168: '1w',
+  720: '30d',
+};
+
+function formatExpiry(iso: string): string {
+  const now = Date.now();
+  const ts = new Date(iso).getTime();
+  const remaining = ts - now;
+  if (remaining <= 0) return 'expired';
+  if (remaining < 3_600_000) return `${Math.max(1, Math.floor(remaining / 60_000))}m left`;
+  if (remaining < 86_400_000) return `${Math.floor(remaining / 3_600_000)}h left`;
+  return `${Math.floor(remaining / 86_400_000)}d left`;
+}
+
+function formatRelative(iso: string): string {
+  const now = Date.now();
+  const ts = new Date(iso).getTime();
+  const diff = now - ts;
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
 
 export default function GroupDetailScreen() {
   const router = useRouter();
@@ -25,6 +60,41 @@ export default function GroupDetailScreen() {
   const isAdmin = isGroupAdmin(id!);
   const members = getMembersByGroupId(id!);
   const chatEnabled = group?.chatEnabled || false;
+
+  const { setActiveGroup, getAnnouncementsForGroup, deleteAnnouncement } = useAnnouncements();
+  const [activeTab, setActiveTab] = useState<Tab>('events');
+
+  useEffect(() => {
+    if (id) setActiveGroup(id);
+  }, [id, setActiveGroup]);
+
+  const groupAnnouncements = useMemo<Announcement[]>(
+    () => id ? getAnnouncementsForGroup(id) : [],
+    [id, getAnnouncementsForGroup],
+  );
+
+  const activeAnnouncement = useMemo(
+    () => groupAnnouncements[0] || null,
+    [groupAnnouncements],
+  );
+
+  const switchTab = (tab: Tab) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setActiveTab(tab);
+  };
+
+  const handleDeleteAnnouncement = (a: Announcement) => {
+    Alert.alert('Delete Announcement', `Remove "${a.title}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => deleteAnnouncement(a.id).catch((e) =>
+          Alert.alert('Error', e?.message || 'Failed to delete announcement'),
+        ),
+      },
+    ]);
+  };
 
   const upcomingEvents = useMemo(() => {
     const now = new Date();
@@ -249,38 +319,156 @@ export default function GroupDetailScreen() {
         )}
       </View>
 
+      <View style={styles.tabBar}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'events' && styles.tabActive]}
+          onPress={() => switchTab('events')}
+          activeOpacity={0.7}
+        >
+          <Calendar size={16} color={activeTab === 'events' ? '#007AFF' : '#999'} />
+          <Text style={[styles.tabText, activeTab === 'events' && styles.tabTextActive]}>Events</Text>
+          {groupAnnouncements.length > 0 && (
+            <View style={styles.tabBadge}>
+              <Text style={styles.tabBadgeText}>{groupAnnouncements.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'announcements' && styles.tabActive]}
+          onPress={() => switchTab('announcements')}
+          activeOpacity={0.7}
+        >
+          <Megaphone size={16} color={activeTab === 'announcements' ? '#007AFF' : '#999'} />
+          <Text style={[styles.tabText, activeTab === 'announcements' && styles.tabTextActive]}>Announcements</Text>
+          {groupAnnouncements.length > 0 && (
+            <View style={[styles.tabBadge, activeTab === 'announcements' && styles.tabBadgeActive]}>
+              <Text style={[styles.tabBadgeText, activeTab === 'announcements' && styles.tabBadgeTextActive]}>{groupAnnouncements.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
       <ScrollView 
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {Object.keys(groupedEvents).length === 0 ? (
-          <View style={styles.emptyState}>
-            <Calendar size={64} color="#CCC" strokeWidth={1.5} />
-            <Text style={styles.emptyTitle}>No Events Yet</Text>
-            <Text style={styles.emptySubtitle}>
-              {isAdmin 
-                ? 'Create your first event to get started' 
-                : 'No events have been created yet'}
-            </Text>
-          </View>
+        {activeTab === 'events' ? (
+          <>
+            {activeAnnouncement && (
+              <TouchableOpacity
+                style={styles.pinnedBanner}
+                onPress={() => switchTab('announcements')}
+                activeOpacity={0.9}
+              >
+                <View style={styles.pinnedAccent} />
+                <View style={styles.pinnedContent}>
+                  <View style={styles.pinnedHeader}>
+                    <Megaphone size={14} color="#007AFF" />
+                    <Text style={styles.pinnedLabel}>PINNED ANNOUNCEMENT</Text>
+                    <Text style={styles.pinnedTime}>{formatRelative(activeAnnouncement.createdAt)}</Text>
+                  </View>
+                  <Text style={styles.pinnedTitle} numberOfLines={1}>{activeAnnouncement.title}</Text>
+                  <Text style={styles.pinnedBody} numberOfLines={2}>{activeAnnouncement.body}</Text>
+                  <View style={styles.pinnedFooter}>
+                    <View style={styles.pinnedExpiry}>
+                      <Clock size={11} color={activeAnnouncement.durationHours === 0 ? '#8E8E93' : '#FF9500'} />
+                      <Text style={[styles.pinnedExpiryText, activeAnnouncement.durationHours === 0 ? styles.pinnedExpiryNever : styles.pinnedExpiryTimed]}>
+                        {activeAnnouncement.durationHours === 0 ? DURATION_LABELS[0] : formatExpiry(activeAnnouncement.expiresAt!)}
+                      </Text>
+                    </View>
+                    <Text style={styles.pinnedMore}>Tap to view all</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {Object.keys(groupedEvents).length === 0 ? (
+              <View style={styles.emptyState}>
+                <Calendar size={64} color="#CCC" strokeWidth={1.5} />
+                <Text style={styles.emptyTitle}>No Events Yet</Text>
+                <Text style={styles.emptySubtitle}>
+                  {isAdmin 
+                    ? 'Create your first event to get started' 
+                    : 'No events have been created yet'}
+                </Text>
+              </View>
+            ) : (
+              Object.keys(groupedEvents).map(dateString => (
+                <View key={dateString} style={styles.dateSection}>
+                  <Text style={styles.dateHeader}>{formatDateHeader(dateString)}</Text>
+                  {groupedEvents[dateString].map(renderEventCard)}
+                </View>
+              ))
+            )}
+          </>
         ) : (
-          Object.keys(groupedEvents).map(dateString => (
-            <View key={dateString} style={styles.dateSection}>
-              <Text style={styles.dateHeader}>{formatDateHeader(dateString)}</Text>
-              {groupedEvents[dateString].map(renderEventCard)}
-            </View>
-          ))
+          <>
+            {groupAnnouncements.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Megaphone size={64} color="#CCC" strokeWidth={1.5} />
+                <Text style={styles.emptyTitle}>No Announcements</Text>
+                <Text style={styles.emptySubtitle}>
+                  {isAdmin
+                    ? 'Post an announcement to keep your group informed.'
+                    : 'Check back later for updates from the admins.'}
+                </Text>
+              </View>
+            ) : (
+              groupAnnouncements.map(a => (
+                <View key={a.id} style={styles.annCard}>
+                  <View style={styles.annAccent} />
+                  <View style={styles.annBody}>
+                    <View style={styles.annHeader}>
+                      <Text style={styles.annTitle}>{a.title}</Text>
+                      {isAdmin && (
+                        <TouchableOpacity onPress={() => handleDeleteAnnouncement(a)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                          <Trash2 size={18} color="#FF3B30" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    <Text style={styles.annBodyText}>{a.body}</Text>
+                    <View style={styles.annMeta}>
+                      <View style={styles.annAuthorRow}>
+                        <View style={styles.annAuthorBadge}>
+                          <Text style={styles.annAuthorInitial}>
+                            {(a.createdByName || '?').charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={styles.annAuthorName}>{a.createdByName}</Text>
+                        <Text style={styles.annDot}>·</Text>
+                        <Text style={styles.annTime}>{formatRelative(a.createdAt)}</Text>
+                      </View>
+                      <View style={[styles.annExpiry, a.durationHours === 0 ? styles.annExpiryNever : styles.annExpiryTimed]}>
+                        <Clock size={12} color={a.durationHours === 0 ? '#8E8E93' : '#FF9500'} />
+                        <Text style={[styles.annExpiryText, a.durationHours === 0 ? styles.annExpiryTextNever : styles.annExpiryTextTimed]}>
+                          {a.durationHours === 0 ? DURATION_LABELS[0] : formatExpiry(a.expiresAt!)}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              ))
+            )}
+          </>
         )}
       </ScrollView>
 
       {isAdmin && (
         <TouchableOpacity
-          style={styles.fab}
-          onPress={() => router.push(`/group/${id}/create-event` as any)}
+          style={[styles.fab, activeTab === 'announcements' && styles.fabAnnouncement]}
+          onPress={() => router.push(
+            activeTab === 'announcements'
+              ? `/group/${id}/create-announcement` as any
+              : `/group/${id}/create-event` as any
+          )}
           activeOpacity={0.8}
         >
-          <Plus size={28} color="#FFF" strokeWidth={2.5} />
+          {activeTab === 'announcements' ? (
+            <Megaphone size={26} color="#FFF" strokeWidth={2.5} />
+          ) : (
+            <Plus size={28} color="#FFF" strokeWidth={2.5} />
+          )}
         </TouchableOpacity>
       )}
     </View>
@@ -505,4 +693,193 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
+  fabAnnouncement: {
+    backgroundColor: '#FF6B35',
+    shadowColor: '#FF6B35',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#FFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5E5',
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  tabActive: {
+    backgroundColor: '#F0F7FF',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: '#999',
+  },
+  tabTextActive: {
+    color: '#007AFF',
+  },
+  tabBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#E5E5E5',
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabBadgeActive: {
+    backgroundColor: '#007AFF',
+  },
+  tabBadgeText: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    color: '#666',
+  },
+  tabBadgeTextActive: {
+    color: '#FFF',
+  },
+  pinnedBanner: {
+    flexDirection: 'row',
+    backgroundColor: '#FFF',
+    borderRadius: 14,
+    marginBottom: 16,
+    overflow: 'hidden',
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  pinnedAccent: {
+    width: 5,
+    backgroundColor: '#007AFF',
+  },
+  pinnedContent: {
+    flex: 1,
+    padding: 14,
+  },
+  pinnedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  pinnedLabel: {
+    fontSize: 10,
+    fontWeight: '800' as const,
+    color: '#007AFF',
+    letterSpacing: 0.8,
+    flex: 1,
+  },
+  pinnedTime: {
+    fontSize: 11,
+    color: '#999',
+  },
+  pinnedTitle: {
+    fontSize: 16,
+    fontWeight: '700' as const,
+    color: '#000',
+    marginBottom: 4,
+  },
+  pinnedBody: {
+    fontSize: 14,
+    color: '#444',
+    lineHeight: 19,
+    marginBottom: 10,
+  },
+  pinnedFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  pinnedExpiry: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  pinnedExpiryText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+  },
+  pinnedExpiryNever: { color: '#8E8E93' },
+  pinnedExpiryTimed: { color: '#FF9500' },
+  pinnedMore: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: '#007AFF',
+  },
+  annCard: {
+    flexDirection: 'row',
+    backgroundColor: '#FFF',
+    borderRadius: 14,
+    marginBottom: 14,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  annAccent: { width: 5, backgroundColor: '#007AFF' },
+  annBody: { flex: 1, padding: 16 },
+  annHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  annTitle: {
+    flex: 1,
+    fontSize: 17,
+    fontWeight: '700' as const,
+    color: '#000',
+    paddingRight: 8,
+  },
+  annBodyText: {
+    fontSize: 15,
+    color: '#333',
+    lineHeight: 22,
+    marginBottom: 12,
+  },
+  annMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  annAuthorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  annAuthorBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#007AFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  annAuthorInitial: { color: '#FFF', fontSize: 11, fontWeight: '700' as const },
+  annAuthorName: { fontSize: 13, fontWeight: '600' as const, color: '#333' },
+  annDot: { color: '#CCC' },
+  annTime: { fontSize: 13, color: '#999' },
+  annExpiry: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  annExpiryNever: { backgroundColor: '#F2F2F7' },
+  annExpiryTimed: { backgroundColor: '#FFF4E5' },
+  annExpiryText: { fontSize: 12, fontWeight: '600' as const },
+  annExpiryTextNever: { color: '#8E8E93' },
+  annExpiryTextTimed: { color: '#FF9500' },
 });
