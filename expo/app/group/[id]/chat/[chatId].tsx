@@ -190,8 +190,6 @@ export default function ChatRoomScreen() {
     );
   };
 
-  const truncate = (s: string, max = 80) => (s.length > max ? `${s.slice(0, max)}…` : s);
-
   const renderReplyQuote = (reply: ChatReplyInfo, isMine: boolean) => {
     return (
       <View
@@ -216,9 +214,8 @@ export default function ChatRoomScreen() {
               styles.replyQuoteText,
               isMine ? styles.replyQuoteTextMine : styles.replyQuoteTextTheirs,
             ]}
-            numberOfLines={2}
           >
-            {truncate(reply.text)}
+            {reply.text}
           </Text>
         </View>
       </View>
@@ -265,14 +262,37 @@ export default function ChatRoomScreen() {
             </Text>
           )}
         </View>
-        <Text
+        <View
           style={[
-            styles.messageTime,
-            isMine ? styles.messageTimeMine : styles.messageTimeTheirs,
+            styles.messageMetaRow,
+            isMine ? styles.messageMetaRowMine : styles.messageMetaRowTheirs,
           ]}
         >
-          {formatTime(item.createdAt)}
-        </Text>
+          <Text
+            style={[
+              styles.messageTime,
+              isMine ? styles.messageTimeMine : styles.messageTimeTheirs,
+            ]}
+          >
+            {formatTime(item.createdAt)}
+          </Text>
+          <TouchableOpacity
+            style={styles.replyButton}
+            onPress={() => handleReply(item)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            activeOpacity={0.6}
+          >
+            <CornerUpLeft size={14} color={isMine ? '#007AFF' : '#888'} />
+            <Text
+              style={[
+                styles.replyButtonText,
+                isMine ? styles.replyButtonTextMine : styles.replyButtonTextTheirs,
+              ]}
+            >
+              Reply
+            </Text>
+          </TouchableOpacity>
+        </View>
       </TouchableOpacity>
     );
   };
@@ -378,8 +398,8 @@ export default function ChatRoomScreen() {
                   <Text style={styles.replyPreviewAuthor} numberOfLines={1}>
                     Replying to {replyTo.userName}
                   </Text>
-                  <Text style={styles.replyPreviewText} numberOfLines={1}>
-                    {truncate(replyTo.text, 60)}
+                  <Text style={styles.replyPreviewText}>
+                    {replyTo.text}
                   </Text>
                 </View>
               </View>
@@ -519,6 +539,7 @@ const styles = StyleSheet.create({
   replyQuoteText: {
     fontSize: 13,
     marginTop: 1,
+    lineHeight: 18,
   },
   replyQuoteTextMine: {
     color: 'rgba(255,255,255,0.7)',
@@ -554,6 +575,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginTop: 1,
+    lineHeight: 16,
   },
   messageBubbleMine: {
     backgroundColor: '#007AFF',
@@ -578,10 +600,40 @@ const styles = StyleSheet.create({
   messageTextTheirs: {
     color: '#000',
   },
-  messageTime: {
-    fontSize: 11,
+  messageMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginTop: 4,
     paddingHorizontal: 4,
+    gap: 10,
+  },
+  messageMetaRowMine: {
+    justifyContent: 'flex-end',
+  },
+  messageMetaRowTheirs: {
+    justifyContent: 'flex-start',
+  },
+  messageTime: {
+    fontSize: 11,
+  },
+  replyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    backgroundColor: '#F0F0F2',
+  },
+  replyButtonText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+  },
+  replyButtonTextMine: {
+    color: '#007AFF',
+  },
+  replyButtonTextTheirs: {
+    color: '#888',
   },
   messageTimeMine: {
     color: '#999',
