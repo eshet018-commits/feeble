@@ -49,6 +49,7 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
     if (groupIds.length === 0) return;
 
     const unsub = firebaseClient.subscribeToAllAnnouncements(groupIds, async (list) => {
+      const now = Date.now();
       for (const ann of list) {
         if (knownAnnouncementIds.current.has(ann.id)) continue;
         knownAnnouncementIds.current.add(ann.id);
@@ -59,10 +60,14 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
         }
         // Skip announcements created by the current user.
         if (ann.createdBy === userId) continue;
-        // Skip announcements the user has already seen.
-        if (await isAnnouncementSeen(userId, ann.id)) continue;
+        // Only notify for announcements created in the last 30 seconds —
+        // older ones are history from before this session and shouldn't
+        // flood the user with banners on app launch or subscription setup.
+        const createdMs = new Date(ann.createdAt).getTime();
+        if (isNaN(createdMs) || now - createdMs > 30_000) continue;
 
         // Instant in-app banner (works on all platforms, including web).
+        // Fires for everyone — admins and viewers alike.
         showNotification({
           kind: 'announcement',
           title: `${groupNameById.current[ann.groupId] || 'Group'}`,
@@ -85,7 +90,7 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
     });
 
     return () => unsub();
-  }, [userId, groupIdsKey]);
+  }, [userId, groupIdsKey, showNotification]);
 
   useEffect(() => {
     if (!activeGroupId) {
@@ -94,13 +99,12 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
     }
     const unsub = firebaseClient.subscribeToAnnouncements(activeGroupId, (list) => {
       setAnnouncements(list);
-      // Mark all currently visible announcements as seen so we don't
-      // notify about them when the background listener fires.
+      // Mark visible announcements as seen for the native notification
+      // handler, but do NOT add to knownAnnouncementIds — that set is
+      // managed exclusively by the background listener so it can correctly
+      // detect new announcements and notify everyone (admins included).
       if (userId) {
         list.forEach((a) => {
-          if (!knownAnnouncementIds.current.has(a.id)) {
-            knownAnnouncementIds.current.add(a.id);
-          }
           markAnnouncementSeen(userId, a.id).catch(() => {});
         });
       }

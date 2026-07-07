@@ -65,6 +65,11 @@ export const [ChatProvider, useChats] = createContextHook(() => {
             Array.from(notifiedMessageIds.current).slice(-300),
           );
         }
+        // Only notify for messages sent in the last 10 seconds —
+        // older ones are history from before this session and shouldn't
+        // flood the user with banners on app launch or subscription setup.
+        const msgMs = new Date(message.createdAt).getTime();
+        if (isNaN(msgMs) || Date.now() - msgMs > 10_000) return;
 
         // Suppress notifications for the chat the user is currently viewing.
         if (isActiveChat(chat.id)) return;

@@ -39,12 +39,17 @@ export const [EventProvider, useEvents] = createContextHook(() => {
       console.log('Events updated from Firebase:', fetchedEvents.length);
       // Fire in-app banners for events we haven't seen before.
       if (userId) {
+        const now = Date.now();
         for (const ev of fetchedEvents) {
           if (knownEventIds.current.has(ev.id)) continue;
           knownEventIds.current.add(ev.id);
           if (knownEventIds.current.size > 500) {
             knownEventIds.current = new Set(Array.from(knownEventIds.current).slice(-300));
           }
+          // Only notify for events created in the last 30 seconds —
+          // older ones are history from before this session.
+          const createdMs = new Date(ev.createdAt).getTime();
+          if (isNaN(createdMs) || now - createdMs > 30_000) continue;
           showNotification({
             kind: 'event',
             title: `${groupNameById.current[ev.groupId] || 'Group'} · New Event`,
