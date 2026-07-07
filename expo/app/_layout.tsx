@@ -192,23 +192,23 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <GestureHandlerRootView style={{ flex: 1 }}>
           <SafeAreaProvider>
-            <UserProvider>
-              <OnboardingProvider>
-                <GroupProvider>
-                  <ChatProvider>
-                    <AnnouncementProvider>
-                      <EventProvider>
-                        <NotificationProvider>
+            <NotificationProvider>
+              <UserProvider>
+                <OnboardingProvider>
+                  <GroupProvider>
+                    <ChatProvider>
+                      <AnnouncementProvider>
+                        <EventProvider>
                           <NotificationBootstrap />
                           <RootLayoutNav />
-                          <NotificationBannerOverlay />
-                        </NotificationProvider>
-                      </EventProvider>
-                    </AnnouncementProvider>
-                  </ChatProvider>
-                </GroupProvider>
-              </OnboardingProvider>
-            </UserProvider>
+                        </EventProvider>
+                      </AnnouncementProvider>
+                    </ChatProvider>
+                  </GroupProvider>
+                </OnboardingProvider>
+              </UserProvider>
+              <NotificationBannerOverlay />
+            </NotificationProvider>
           </SafeAreaProvider>
         </GestureHandlerRootView>
       </QueryClientProvider>
