@@ -64,11 +64,12 @@ function AnnouncementPollView({
 }) {
   if (!poll) return null;
 
-  const totalVotes = Object.keys(poll.votes).length;
-  const userVote = userId ? poll.votes[userId] : undefined;
+  const votes = poll.votes || {};
+  const totalVotes = Object.keys(votes).length;
+  const userVote = userId ? votes[userId] : undefined;
 
   const countFor = (optionId: string): number =>
-    Object.values(poll.votes).filter((v) => v === optionId).length;
+    Object.values(votes).filter((v) => v === optionId).length;
 
   return (
     <View style={styles.pollContainer}>

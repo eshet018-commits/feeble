@@ -713,7 +713,11 @@ export const firebaseClient = {
           if (!a.expiresAt) return true;
           const ts = new Date(a.expiresAt).getTime();
           return !isNaN(ts) && ts > now;
-        });
+        })
+        .map((a) => ({
+          ...a,
+          poll: a.poll ? { ...a.poll, votes: a.poll.votes || {} } : a.poll,
+        }));
       list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       callback(list);
     });

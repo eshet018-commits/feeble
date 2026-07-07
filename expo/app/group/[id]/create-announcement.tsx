@@ -107,7 +107,11 @@ export default function CreateAnnouncementScreen() {
         durationHours,
         poll: pollInput,
       });
-      router.back();
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace(`/group/${id}` as any);
+      }
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'Failed to create announcement');
     }
