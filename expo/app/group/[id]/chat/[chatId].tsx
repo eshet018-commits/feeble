@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Send, ArrowLeft, Shield, MessageSquareX, EyeOff, Paperclip, File as FileIcon, Image as ImageIcon, Download } from 'lucide-react-native';
+import { Send, ArrowLeft, Shield, MessageSquareX, EyeOff, Paperclip, File as FileIcon, Image as ImageIcon, Download, CornerUpLeft, X } from 'lucide-react-native';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View,
@@ -21,7 +21,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useUser } from '@/contexts/UserContext';
 import { useGroups } from '@/contexts/GroupContext';
 import { useChats } from '@/contexts/ChatContext';
-import { ChatMessage, ChatFileAttachment } from '@/types/event';
+import { ChatMessage, ChatFileAttachment, ChatReplyInfo } from '@/types/event';
 
 export default function ChatRoomScreen() {
   const router = useRouter();
@@ -43,6 +43,7 @@ export default function ChatRoomScreen() {
   const [isSending, setIsSending] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [pendingAttachment, setPendingAttachment] = useState<ChatFileAttachment | null>(null);
+  const [replyTo, setReplyTo] = useState<ChatReplyInfo | null>(null);
   const flatListRef = useRef<FlatList<ChatMessage>>(null);
 
   const chat = chats.find((c) => c.id === chatId);
@@ -83,17 +84,20 @@ export default function ChatRoomScreen() {
     if (!chatId) return;
     setIsSending(true);
     try {
+      const replyInfo = replyTo ?? undefined;
       if (pendingAttachment) {
         await sendFileMessage(chatId, 
           { name: pendingAttachment.name, uri: pendingAttachment.url, mimeType: pendingAttachment.type, size: pendingAttachment.size },
-          trimmed
+          trimmed,
+          replyInfo
         );
         setPendingAttachment(null);
         setText('');
       } else {
-        await sendMessage(chatId, trimmed);
+        await sendMessage(chatId, trimmed, replyInfo);
         setText('');
       }
+      setReplyTo(null);
     } catch (error: any) {
       console.error('Failed to send message:', error);
       Alert.alert('Send failed', error?.message || 'Could not send your message. Please try again.');
@@ -101,6 +105,18 @@ export default function ChatRoomScreen() {
       setIsSending(false);
     }
   };
+
+  const handleReply = useCallback((message: ChatMessage) => {
+    const replyText = message.text?.trim()
+      || (message.attachment ? message.attachment.name : '');
+    setReplyTo({
+      messageId: message.id,
+      userName: message.userName,
+      text: replyText,
+    });
+  }, []);
+
+  const cancelReply = useCallback(() => setReplyTo(null), []);
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
@@ -251,13 +267,52 @@ export default function ChatRoomScreen() {
     );
   };
 
+  const truncate = (s: string, max = 80) => (s.length > max ? `${s.slice(0, max)}…` : s);
+
+  const renderReplyQuote = (reply: ChatReplyInfo, isMine: boolean) => {
+    return (
+      <View
+        style={[
+          styles.replyQuote,
+          isMine ? styles.replyQuoteMine : styles.replyQuoteTheirs,
+        ]}
+      >
+        <View style={styles.replyQuoteBar} />
+        <View style={styles.replyQuoteContent}>
+          <Text
+            style={[
+              styles.replyQuoteAuthor,
+              isMine ? styles.replyQuoteAuthorMine : styles.replyQuoteAuthorTheirs,
+            ]}
+            numberOfLines={1}
+          >
+            {reply.userName}
+          </Text>
+          <Text
+            style={[
+              styles.replyQuoteText,
+              isMine ? styles.replyQuoteTextMine : styles.replyQuoteTextTheirs,
+            ]}
+            numberOfLines={2}
+          >
+            {truncate(reply.text)}
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
   const renderMessage = ({ item }: { item: ChatMessage }) => {
     const isMine = item.userId === userId;
     const hasText = !!(item.text && item.text.trim());
     const hasAttachment = !!item.attachment;
+    const hasReply = !!item.replyTo;
 
     return (
-      <View
+      <TouchableOpacity
+        activeOpacity={1}
+        onLongPress={() => handleReply(item)}
+        delayLongPress={300}
         style={[
           styles.messageRow,
           isMine ? styles.messageRowMine : styles.messageRowTheirs,
@@ -273,6 +328,7 @@ export default function ChatRoomScreen() {
             hasAttachment && !hasText && styles.messageBubbleAttachmentOnly,
           ]}
         >
+          {hasReply && renderReplyQuote(item.replyTo!, isMine)}
           {hasAttachment && renderAttachment(item.attachment!, isMine)}
           {hasText && (
             <Text
@@ -294,7 +350,7 @@ export default function ChatRoomScreen() {
         >
           {formatTime(item.createdAt)}
         </Text>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -391,6 +447,27 @@ export default function ChatRoomScreen() {
 
       {canType ? (
         <View style={styles.inputBar}>
+          {replyTo && (
+            <View style={styles.replyPreviewBar}>
+              <View style={styles.replyPreviewLeft}>
+                <CornerUpLeft size={16} color="#007AFF" />
+                <View style={styles.replyPreviewContent}>
+                  <Text style={styles.replyPreviewAuthor} numberOfLines={1}>
+                    Replying to {replyTo.userName}
+                  </Text>
+                  <Text style={styles.replyPreviewText} numberOfLines={1}>
+                    {truncate(replyTo.text, 60)}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={cancelReply}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <X size={18} color="#999" />
+              </TouchableOpacity>
+            </View>
+          )}
           {pendingAttachment && (
             <View style={styles.pendingAttachmentBar}>
               <View style={styles.pendingAttachmentInfo}>
@@ -527,6 +604,74 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 10,
+  },
+  replyQuote: {
+    flexDirection: 'row',
+    marginBottom: 6,
+    paddingLeft: 8,
+    borderLeftWidth: 2,
+  },
+  replyQuoteMine: {
+    borderLeftColor: 'rgba(255,255,255,0.5)',
+  },
+  replyQuoteTheirs: {
+    borderLeftColor: '#007AFF',
+  },
+  replyQuoteBar: {
+    width: 0,
+  },
+  replyQuoteContent: {
+    flex: 1,
+    marginLeft: 2,
+  },
+  replyQuoteAuthor: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+  },
+  replyQuoteAuthorMine: {
+    color: 'rgba(255,255,255,0.85)',
+  },
+  replyQuoteAuthorTheirs: {
+    color: '#007AFF',
+  },
+  replyQuoteText: {
+    fontSize: 13,
+    marginTop: 1,
+  },
+  replyQuoteTextMine: {
+    color: 'rgba(255,255,255,0.7)',
+  },
+  replyQuoteTextTheirs: {
+    color: '#666',
+  },
+  replyPreviewBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#E8F0FE',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  replyPreviewLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 8,
+  },
+  replyPreviewContent: {
+    flex: 1,
+  },
+  replyPreviewAuthor: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: '#007AFF',
+  },
+  replyPreviewText: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 1,
   },
   messageBubbleMine: {
     backgroundColor: '#007AFF',

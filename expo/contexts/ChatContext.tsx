@@ -72,19 +72,19 @@ export const [ChatProvider, useChats] = createContextHook(() => {
   }, [activeChatId]);
 
   const sendMessage = useCallback(
-    async (chatId: string, text: string) => {
+    async (chatId: string, text: string, replyTo?: { messageId: string; userName: string; text: string }) => {
       if (!userId) throw new Error('User not authenticated');
       if (!text.trim()) throw new Error('Message cannot be empty');
-      await firebaseClient.sendMessage(chatId, userId, userName, text.trim());
+      await firebaseClient.sendMessage(chatId, userId, userName, text.trim(), replyTo);
     },
     [userId, userName]
   );
 
   const sendFileMessage = useCallback(
-    async (chatId: string, file: { name: string; uri: string; mimeType: string; size: number }, caption?: string) => {
+    async (chatId: string, file: { name: string; uri: string; mimeType: string; size: number }, caption?: string, replyTo?: { messageId: string; userName: string; text: string }) => {
       if (!userId) throw new Error('User not authenticated');
       const attachment = await firebaseClient.uploadChatAttachment(chatId, userId, file);
-      await firebaseClient.sendFileMessage(chatId, userId, userName, attachment, caption?.trim() || '');
+      await firebaseClient.sendFileMessage(chatId, userId, userName, attachment, caption?.trim() || '', replyTo);
     },
     [userId, userName]
   );

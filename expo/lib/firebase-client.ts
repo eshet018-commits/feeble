@@ -450,7 +450,7 @@ export const firebaseClient = {
     return () => off(chatsRef);
   },
 
-  async sendMessage(chatId: string, userId: string, userName: string, text: string): Promise<ChatMessage> {
+  async sendMessage(chatId: string, userId: string, userName: string, text: string, replyTo?: { messageId: string; userName: string; text: string }): Promise<ChatMessage> {
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const message: ChatMessage = {
       id: messageId,
@@ -459,6 +459,7 @@ export const firebaseClient = {
       userName,
       text,
       createdAt: new Date().toISOString(),
+      ...(replyTo ? { replyTo } : {}),
     };
     await set(ref(database, `chats/${chatId}/messages/${messageId}`), message);
     return message;
@@ -512,7 +513,7 @@ export const firebaseClient = {
     };
   },
 
-  async sendFileMessage(chatId: string, userId: string, userName: string, attachment: ChatFileAttachment, text: string = ''): Promise<ChatMessage> {
+  async sendFileMessage(chatId: string, userId: string, userName: string, attachment: ChatFileAttachment, text: string = '', replyTo?: { messageId: string; userName: string; text: string }): Promise<ChatMessage> {
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const message: ChatMessage = {
       id: messageId,
@@ -522,6 +523,7 @@ export const firebaseClient = {
       text,
       attachment,
       createdAt: new Date().toISOString(),
+      ...(replyTo ? { replyTo } : {}),
     };
     await set(ref(database, `chats/${chatId}/messages/${messageId}`), message);
     return message;

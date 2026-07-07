@@ -109,6 +109,12 @@ export interface ChatFileAttachment {
   size: number;
 }
 
+export interface ChatReplyInfo {
+  messageId: string;
+  userName: string;
+  text: string;
+}
+
 export interface ChatMessage {
   id: string;
   chatId: string;
@@ -117,4 +123,5 @@ export interface ChatMessage {
   text: string;
   createdAt: string;
   attachment?: ChatFileAttachment;
+  replyTo?: ChatReplyInfo;
 }
