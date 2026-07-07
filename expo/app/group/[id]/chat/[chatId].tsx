@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Send, ArrowLeft, Shield, MessageSquareX, EyeOff, Paperclip, File as FileIcon, Image as ImageIcon, Download, CornerUpLeft, X } from 'lucide-react-native';
+import { Send, ArrowLeft, Shield, MessageSquareX, EyeOff, File as FileIcon, Download, CornerUpLeft, X } from 'lucide-react-native';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View,
@@ -15,9 +15,6 @@ import {
   Linking,
   Image as RNImage,
 } from 'react-native';
-import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
-
 import { useUser } from '@/contexts/UserContext';
 import { useGroups } from '@/contexts/GroupContext';
 import { useChats } from '@/contexts/ChatContext';
@@ -35,14 +32,12 @@ export default function ChatRoomScreen() {
     chats,
     subscribeToMessages,
     sendMessage,
-    sendFileMessage,
     getMessagesForChat,
   } = useChats();
 
   const [text, setText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [pendingAttachment, setPendingAttachment] = useState<ChatFileAttachment | null>(null);
   const [replyTo, setReplyTo] = useState<ChatReplyInfo | null>(null);
   const flatListRef = useRef<FlatList<ChatMessage>>(null);
 
@@ -80,23 +75,13 @@ export default function ChatRoomScreen() {
 
   const handleSend = async () => {
     const trimmed = text.trim();
-    if (!trimmed && !pendingAttachment) return;
+    if (!trimmed) return;
     if (!chatId) return;
     setIsSending(true);
     try {
       const replyInfo = replyTo ?? undefined;
-      if (pendingAttachment) {
-        await sendFileMessage(chatId, 
-          { name: pendingAttachment.name, uri: pendingAttachment.url, mimeType: pendingAttachment.type, size: pendingAttachment.size },
-          trimmed,
-          replyInfo
-        );
-        setPendingAttachment(null);
-        setText('');
-      } else {
-        await sendMessage(chatId, trimmed, replyInfo);
-        setText('');
-      }
+      await sendMessage(chatId, trimmed, replyInfo);
+      setText('');
       setReplyTo(null);
     } catch (error: any) {
       console.error('Failed to send message:', error);
@@ -123,68 +108,6 @@ export default function ChatRoomScreen() {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
-
-  const handlePickDocument = useCallback(async () => {
-    if (!canType) return;
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        copyToCacheDirectory: true,
-        multiple: false,
-      });
-      if (result.canceled || !result.assets || result.assets.length === 0) return;
-      const asset = result.assets[0];
-      if (asset.size && asset.size > 10 * 1024 * 1024) {
-        Alert.alert('File too large', 'Please choose a file under 10 MB.');
-        return;
-      }
-      setPendingAttachment({
-        name: asset.name,
-        url: asset.uri,
-        type: asset.mimeType || 'application/octet-stream',
-        size: asset.size ?? 0,
-      });
-    } catch (error: any) {
-      console.error('Document pick failed:', error);
-      Alert.alert('Could not pick file', error?.message || 'Please try again.');
-    }
-  }, [canType]);
-
-  const handlePickImage = useCallback(async () => {
-    if (!canType) return;
-    try {
-      const perm = await ImagePicker.getMediaLibraryPermissionsAsync();
-      if (!perm.granted && perm.canAskAgain) {
-        const req = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!req.granted) {
-          Alert.alert('Permission needed', 'Photo library access is required to share images.');
-          return;
-        }
-      } else if (!perm.granted) {
-        Alert.alert('Permission needed', 'Photo library access is required to share images. Please enable it in your settings.');
-        return;
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
-        allowsMultipleSelection: false,
-      });
-      if (result.canceled || !result.assets || result.assets.length === 0) return;
-      const asset = result.assets[0];
-      if (asset.fileSize && asset.fileSize > 10 * 1024 * 1024) {
-        Alert.alert('File too large', 'Please choose an image under 10 MB.');
-        return;
-      }
-      setPendingAttachment({
-        name: asset.fileName || `photo_${Date.now()}.jpg`,
-        url: asset.uri,
-        type: asset.mimeType || 'image/jpeg',
-        size: asset.fileSize ?? 0,
-      });
-    } catch (error: any) {
-      console.error('Image pick failed:', error);
-      Alert.alert('Could not pick image', error?.message || 'Please try again.');
-    }
-  }, [canType]);
 
   const handleOpenAttachment = useCallback(async (attachment: ChatFileAttachment) => {
     try {
@@ -468,53 +391,12 @@ export default function ChatRoomScreen() {
               </TouchableOpacity>
             </View>
           )}
-          {pendingAttachment && (
-            <View style={styles.pendingAttachmentBar}>
-              <View style={styles.pendingAttachmentInfo}>
-                {pendingAttachment.type.startsWith('image/') ? (
-                  <ImageIcon size={16} color="#007AFF" />
-                ) : (
-                  <FileIcon size={16} color="#007AFF" />
-                )}
-                <Text style={styles.pendingAttachmentName} numberOfLines={1} ellipsizeMode="middle">
-                  {pendingAttachment.name}
-                </Text>
-                <Text style={styles.pendingAttachmentSize}>
-                  {formatFileSize(pendingAttachment.size)}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setPendingAttachment(null)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Text style={styles.pendingAttachmentRemove}>Remove</Text>
-              </TouchableOpacity>
-            </View>
-          )}
           <View style={styles.inputRow}>
-            <TouchableOpacity
-              style={styles.attachButton}
-              onPress={handlePickImage}
-              disabled={isSending}
-              activeOpacity={0.6}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <ImageIcon size={22} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.attachButton}
-              onPress={handlePickDocument}
-              disabled={isSending}
-              activeOpacity={0.6}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <Paperclip size={22} color="#007AFF" />
-            </TouchableOpacity>
             <TextInput
               style={styles.textInput}
               value={text}
               onChangeText={setText}
-              placeholder={pendingAttachment ? 'Add a caption (optional)...' : 'Type a message...'}
+              placeholder={'Type a message...'}
               placeholderTextColor="#999"
               multiline
               maxLength={1000}
@@ -523,10 +405,10 @@ export default function ChatRoomScreen() {
             <TouchableOpacity
               style={[
                 styles.sendButton,
-                (!text.trim() && !pendingAttachment) || isSending ? styles.sendButtonDisabled : null,
+                !text.trim() || isSending ? styles.sendButtonDisabled : null,
               ]}
               onPress={handleSend}
-              disabled={(!text.trim() && !pendingAttachment) || isSending}
+              disabled={!text.trim() || isSending}
               activeOpacity={0.7}
             >
               {isSending ? (
@@ -534,7 +416,7 @@ export default function ChatRoomScreen() {
               ) : (
                 <Send
                   size={18}
-                  color={(text.trim() || pendingAttachment) ? '#FFF' : '#CCC'}
+                  color={text.trim() ? '#FFF' : '#CCC'}
                 />
               )}
             </TouchableOpacity>
