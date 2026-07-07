@@ -1,19 +1,58 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { EventProvider } from "@/contexts/EventContext";
-import { UserProvider } from "@/contexts/UserContext";
+import { UserProvider, useUser } from "@/contexts/UserContext";
 import { GroupProvider } from "@/contexts/GroupContext";
 import { OnboardingProvider } from "@/contexts/OnboardingContext";
 import { ChatProvider } from "@/contexts/ChatContext";
 import { AnnouncementProvider } from "@/contexts/AnnouncementContext";
 import { trpc, trpcClient } from "@/lib/trpc";
+import {
+  registerForPushNotifications,
+  setupNotificationTapHandler,
+} from "@/utils/notifications";
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
+
+/**
+ * Wires up push notification registration and tap-to-deep-link handling.
+ * Must live inside the providers so it has access to the user and router.
+ */
+function NotificationBootstrap() {
+  const router = useRouter();
+
+  useEffect(() => {
+    // Register for push notifications on launch.
+    registerForPushNotifications().catch((e) =>
+      console.warn("[Notifications] Registration failed:", e),
+    );
+
+    // Handle taps on notifications — deep-link into the relevant screen.
+    const removeTap = setupNotificationTapHandler((data) => {
+      const kind = data.kind as string | undefined;
+      try {
+        if (kind === "chat" && data.chatId) {
+          router.push(`/group/${data.groupId}/chat/${data.chatId}` as any);
+        } else if (kind === "announcement" && data.groupId) {
+          router.push(`/group/${data.groupId}` as any);
+        } else if (kind === "event" && data.eventId) {
+          router.push(`/event/${data.eventId}` as any);
+        }
+      } catch (e) {
+        console.warn("[Notifications] Tap deep-link failed:", e);
+      }
+    });
+
+    return () => removeTap();
+  }, [router]);
+
+  return null;
+}
 
 function RootLayoutNav() {
   return (
@@ -156,6 +195,7 @@ export default function RootLayout() {
                 <ChatProvider>
                   <AnnouncementProvider>
                     <EventProvider>
+                      <NotificationBootstrap />
                       <RootLayoutNav />
                     </EventProvider>
                   </AnnouncementProvider>

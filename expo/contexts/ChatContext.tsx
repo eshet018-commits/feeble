@@ -3,7 +3,14 @@ import { useCallback, useState, useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Chat, ChatMessage, ChatVisibility, ChatFileAttachment, ChatSettings } from '@/types/event';
 import { useUser } from './UserContext';
+import { useGroups } from './GroupContext';
 import { firebaseClient } from '@/lib/firebase-client';
+import {
+  setActiveChat as setGlobalActiveChat,
+  notifyChatMessage,
+  markChatSeen,
+  getChatLastSeen,
+} from '@/utils/notifications';
 
 const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   notificationsEnabled: true,
@@ -22,12 +29,52 @@ function settingsKey(userId: string | undefined, chatId: string): string {
 
 export const [ChatProvider, useChats] = createContextHook(() => {
   const { userId, userName } = useUser();
+  const { groups } = useGroups();
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chatSettings, setChatSettings] = useState<Record<string, ChatSettings>>({});
   const [settingsLoading, setSettingsLoading] = useState<Record<string, boolean>>({});
   const unsubscribeRefs = useRef<Record<string, (() => void) | undefined>>({});
+  const notifiedMessageIds = useRef<Set<string>>(new Set());
+  const groupIdsKey = groups.map((g) => g.id).join(',');
+
+  // ---------------------------------------------------------------------------
+  // Background notification listener — subscribes to messages across every
+  // group the user is a member of and fires a local notification for any
+  // message that isn't theirs and isn't in the chat they're currently viewing.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!userId || !groupIdsKey) return;
+    const groupIds = groupIdsKey.split(',').filter(Boolean);
+    if (groupIds.length === 0) return;
+
+    const unsub = firebaseClient.subscribeToAllChatMessages(
+      groupIds,
+      (chat, message) => {
+        if (message.userId === userId) return; // skip own messages
+        if (notifiedMessageIds.current.has(message.id)) return;
+        notifiedMessageIds.current.add(message.id);
+        // Add a small cap to avoid unbounded growth.
+        if (notifiedMessageIds.current.size > 500) {
+          notifiedMessageIds.current = new Set(
+            Array.from(notifiedMessageIds.current).slice(-300),
+          );
+        }
+
+        notifyChatMessage({
+          recipientUserId: userId,
+          chatId: chat.id,
+          groupId: chat.groupId,
+          chatName: chat.name,
+          senderName: message.userName,
+          text: message.text || (message.attachment ? message.attachment.name : ''),
+        }).catch(() => {});
+      },
+    );
+
+    return () => unsub();
+  }, [userId, groupIdsKey]);
 
   useEffect(() => {
     return () => {
@@ -49,14 +96,20 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       unsubscribeRefs.current[chatId]?.();
     }
 
+    // Track this chat as active so the notification handler suppresses alerts for it.
+    setGlobalActiveChat(chatId);
+    setActiveChatId(chatId);
+    if (userId) {
+      markChatSeen(userId, chatId).catch(() => {});
+    }
+
     const unsub = firebaseClient.subscribeToMessages(chatId, (newMessages) => {
       setMessages((prev) => ({ ...prev, [chatId]: newMessages }));
     });
 
     unsubscribeRefs.current[chatId] = unsub;
-    setActiveChatId(chatId);
     return unsub;
-  }, []);
+  }, [userId]);
 
   const createChat = useCallback(
     async (groupId: string, name: string, visibility: ChatVisibility = 'open') => {

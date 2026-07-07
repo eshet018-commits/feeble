@@ -71,9 +71,16 @@ export const [EventProvider, useEvents] = createContextHook(() => {
         reminders: event.reminders,
         location: event.location,
       });
-      
+
       console.log('Event created successfully:', result.id);
-      
+
+      // Schedule local reminder notifications so the user is alerted before the event.
+      try {
+        await scheduleEventReminders(event);
+      } catch (notifError) {
+        console.warn('Failed to schedule event reminders:', notifError);
+      }
+
       return event;
     } catch (error: any) {
       console.error('Failed to create event:', error);

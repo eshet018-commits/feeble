@@ -450,6 +450,101 @@ export const firebaseClient = {
     return () => off(chatsRef);
   },
 
+  /**
+   * Subscribe to all chats for a set of group IDs. Used by the background
+   * notification listener so a user gets notified for any group they're in.
+   */
+  subscribeToAllChats(groupIds: string[], callback: (chats: Chat[]) => void) {
+    if (groupIds.length === 0) {
+      callback([]);
+      return () => {};
+    }
+
+    const chatsRef = ref(database, 'chats');
+
+    onValue(chatsRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        callback([]);
+        return;
+      }
+      const allChats = snapshot.val();
+      const chats: Chat[] = Object.values(allChats);
+      const filtered = chats.filter((c) => groupIds.includes(c.groupId));
+      callback(filtered);
+    });
+
+    return () => off(chatsRef);
+  },
+
+  /**
+   * Subscribe to the messages of every chat in a group set, invoking the
+   * callback for each new message as it arrives. Returns an unsubscribe fn.
+   * Used by the notification listener.
+   */
+  subscribeToAllChatMessages(
+    groupIds: string[],
+    onNewMessage: (chat: Chat, message: ChatMessage) => void,
+  ): () => void {
+    if (groupIds.length === 0) return () => {};
+
+    const chatsRef = ref(database, 'chats');
+    const messageUnsubs: Record<string, () => void> = {};
+    let knownChats: Record<string, Chat> = {};
+
+    const syncChatSubscriptions = (chats: Chat[]) => {
+      const myChats = chats.filter((c) => groupIds.includes(c.groupId));
+      const myChatIds = new Set(myChats.map((c) => c.id));
+      knownChats = {};
+      myChats.forEach((c) => {
+        knownChats[c.id] = c;
+      });
+
+      // Subscribe to messages for any new chats.
+      for (const chat of myChats) {
+        if (messageUnsubs[chat.id]) continue;
+        const messagesRef = ref(database, `chats/${chat.id}/messages`);
+        const handler = (snapshot: any) => {
+          if (!snapshot.exists()) return;
+          const data = snapshot.val() as Record<string, ChatMessage>;
+          const msgs = Object.values(data).sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+          );
+          const chatObj = knownChats[chat.id];
+          if (!chatObj) return;
+          for (const m of msgs) onNewMessage(chatObj, m);
+        };
+        onValue(messagesRef, handler);
+        messageUnsubs[chat.id] = () => off(messagesRef);
+      }
+
+      // Unsubscribe from removed chats.
+      for (const id of Object.keys(messageUnsubs)) {
+        if (!myChatIds.has(id)) {
+          messageUnsubs[id]?.();
+          delete messageUnsubs[id];
+          delete knownChats[id];
+        }
+      }
+    };
+
+    onValue(chatsRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        Object.values(messageUnsubs).forEach((u) => u());
+        Object.keys(messageUnsubs).forEach((id) => delete messageUnsubs[id]);
+        knownChats = {};
+        return;
+      }
+      const allChats = snapshot.val() as Record<string, Chat>;
+      const chats = Object.values(allChats);
+      syncChatSubscriptions(chats);
+    });
+
+    return () => {
+      off(chatsRef);
+      Object.values(messageUnsubs).forEach((u) => u());
+    };
+  },
+
   async sendMessage(chatId: string, userId: string, userName: string, text: string, replyTo?: { messageId: string; userName: string; text: string }): Promise<ChatMessage> {
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const message: ChatMessage = {
@@ -709,6 +804,47 @@ export const firebaseClient = {
       const all = snapshot.val() as Record<string, Announcement>;
       const list = Object.values(all)
         .filter((a) => a.groupId === groupId)
+        .filter((a) => {
+          if (!a.expiresAt) return true;
+          const ts = new Date(a.expiresAt).getTime();
+          return !isNaN(ts) && ts > now;
+        })
+        .map((a) => ({
+          ...a,
+          poll: a.poll ? { ...a.poll, votes: a.poll.votes || {} } : a.poll,
+        }));
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(list);
+    });
+
+    return () => off(annRef);
+  },
+
+  /**
+   * Subscribe to all announcements across a set of groups. Invokes the
+   * callback once with the initial snapshot and then again whenever data
+   * changes. Used by the notification listener.
+   */
+  subscribeToAllAnnouncements(
+    groupIds: string[],
+    callback: (announcements: Announcement[]) => void,
+  ): () => void {
+    if (groupIds.length === 0) {
+      callback([]);
+      return () => {};
+    }
+
+    const annRef = ref(database, 'announcements');
+
+    onValue(annRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        callback([]);
+        return;
+      }
+      const now = Date.now();
+      const all = snapshot.val() as Record<string, Announcement>;
+      const list = Object.values(all)
+        .filter((a) => groupIds.includes(a.groupId))
         .filter((a) => {
           if (!a.expiresAt) return true;
           const ts = new Date(a.expiresAt).getTime();

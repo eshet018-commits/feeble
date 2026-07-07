@@ -22,6 +22,7 @@ import { useUser } from '@/contexts/UserContext';
 import { useGroups } from '@/contexts/GroupContext';
 import { useChats } from '@/contexts/ChatContext';
 import { ChatMessage, ChatFileAttachment, ChatReplyInfo, ChatSettings } from '@/types/event';
+import { setActiveChat as setGlobalActiveChat } from '@/utils/notifications';
 
 export default function ChatRoomScreen() {
   const router = useRouter();
@@ -76,6 +77,7 @@ export default function ChatRoomScreen() {
     const unsub = subscribeToMessages(chatId);
     return () => {
       unsub();
+      setGlobalActiveChat(null);
     };
   }, [chatId, subscribeToMessages, canView]);
 
