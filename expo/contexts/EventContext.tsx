@@ -1,19 +1,31 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Event, Category, ExpandedEvent, Poll, PollOption } from '@/types/event';
 import { DEFAULT_CATEGORIES } from '@/constants/categories';
 import { scheduleEventReminders, cancelEventReminders } from '@/utils/notifications';
 import { firebaseClient } from '@/lib/firebase-client';
 import { useGroups } from './GroupContext';
+import { useNotifications } from './NotificationContext';
+import { useUser } from './UserContext';
 
 const CATEGORIES_STORAGE_KEY = 'categories';
 
 export const [EventProvider, useEvents] = createContextHook(() => {
   const { groups } = useGroups();
+  const { userId } = useUser();
+  const { showNotification } = useNotifications();
   const [events, setEvents] = useState<Event[]>([]);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [isLoading, setIsLoading] = useState(true);
+  const knownEventIds = useRef<Set<string>>(new Set());
+  const groupNameById = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    const map: Record<string, string> = {};
+    groups.forEach((g) => { map[g.id] = g.name; });
+    groupNameById.current = map;
+  }, [groups]);
 
   useEffect(() => {
     const groupIds = groups.map(g => g.id);
@@ -25,6 +37,22 @@ export const [EventProvider, useEvents] = createContextHook(() => {
 
     const unsubscribe = firebaseClient.subscribeToUserEvents(groupIds, (fetchedEvents) => {
       console.log('Events updated from Firebase:', fetchedEvents.length);
+      // Fire in-app banners for events we haven't seen before.
+      if (userId) {
+        for (const ev of fetchedEvents) {
+          if (knownEventIds.current.has(ev.id)) continue;
+          knownEventIds.current.add(ev.id);
+          if (knownEventIds.current.size > 500) {
+            knownEventIds.current = new Set(Array.from(knownEventIds.current).slice(-300));
+          }
+          showNotification({
+            kind: 'event',
+            title: `${groupNameById.current[ev.groupId] || 'Group'} · New Event`,
+            body: ev.title,
+            data: { eventId: ev.id, groupId: ev.groupId },
+          });
+        }
+      }
       setEvents(fetchedEvents);
       setIsLoading(false);
     });
@@ -32,7 +60,7 @@ export const [EventProvider, useEvents] = createContextHook(() => {
     return () => {
       unsubscribe();
     };
-  }, [groups]);
+  }, [groups, userId, showNotification]);
 
   useEffect(() => {
     loadCategories();

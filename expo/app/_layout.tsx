@@ -9,6 +9,8 @@ import { GroupProvider } from "@/contexts/GroupContext";
 import { OnboardingProvider } from "@/contexts/OnboardingContext";
 import { ChatProvider } from "@/contexts/ChatContext";
 import { AnnouncementProvider } from "@/contexts/AnnouncementContext";
+import { NotificationProvider, NotificationBannerOverlay } from "@/contexts/NotificationContext";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { trpc, trpcClient } from "@/lib/trpc";
 import {
   registerForPushNotifications,
@@ -189,20 +191,25 @@ export default function RootLayout() {
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
         <GestureHandlerRootView style={{ flex: 1 }}>
-          <UserProvider>
-            <OnboardingProvider>
-              <GroupProvider>
-                <ChatProvider>
-                  <AnnouncementProvider>
-                    <EventProvider>
-                      <NotificationBootstrap />
-                      <RootLayoutNav />
-                    </EventProvider>
-                  </AnnouncementProvider>
-                </ChatProvider>
-              </GroupProvider>
-            </OnboardingProvider>
-          </UserProvider>
+          <SafeAreaProvider>
+            <UserProvider>
+              <OnboardingProvider>
+                <GroupProvider>
+                  <ChatProvider>
+                    <AnnouncementProvider>
+                      <EventProvider>
+                        <NotificationProvider>
+                          <NotificationBootstrap />
+                          <RootLayoutNav />
+                          <NotificationBannerOverlay />
+                        </NotificationProvider>
+                      </EventProvider>
+                    </AnnouncementProvider>
+                  </ChatProvider>
+                </GroupProvider>
+              </OnboardingProvider>
+            </UserProvider>
+          </SafeAreaProvider>
         </GestureHandlerRootView>
       </QueryClientProvider>
     </trpc.Provider>

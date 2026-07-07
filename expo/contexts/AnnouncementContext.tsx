@@ -9,6 +9,7 @@ import {
   isAnnouncementSeen,
   markAnnouncementSeen,
 } from '@/utils/notifications';
+import { useNotifications } from './NotificationContext';
 
 /**
  * Shared announcement state. Subscribes to announcements for the active group
@@ -17,6 +18,7 @@ import {
 export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => {
   const { userId } = useUser();
   const { groups } = useGroups();
+  const { showNotification } = useNotifications();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -60,6 +62,18 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
         // Skip announcements the user has already seen.
         if (await isAnnouncementSeen(userId, ann.id)) continue;
 
+        // Instant in-app banner (works on all platforms, including web).
+        showNotification({
+          kind: 'announcement',
+          title: `${groupNameById.current[ann.groupId] || 'Group'}`,
+          body: `New announcement: ${ann.title}`,
+          data: {
+            announcementId: ann.id,
+            groupId: ann.groupId,
+            recipientUserId: userId,
+          },
+        });
+        // Also fire a native system notification where supported.
         notifyAnnouncement({
           recipientUserId: userId,
           announcementId: ann.id,

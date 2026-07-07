@@ -11,6 +11,7 @@ import {
   markChatSeen,
   getChatLastSeen,
 } from '@/utils/notifications';
+import { useNotifications } from './NotificationContext';
 
 const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   notificationsEnabled: true,
@@ -30,6 +31,7 @@ function settingsKey(userId: string | undefined, chatId: string): string {
 export const [ChatProvider, useChats] = createContextHook(() => {
   const { userId, userName } = useUser();
   const { groups } = useGroups();
+  const { showNotification } = useNotifications();
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -62,6 +64,18 @@ export const [ChatProvider, useChats] = createContextHook(() => {
           );
         }
 
+        // Instant in-app banner (works on all platforms, including web).
+        showNotification({
+          kind: 'chat',
+          title: `${message.userName} · ${chat.name}`,
+          body: message.text || (message.attachment ? message.attachment.name : '') || 'Sent a message',
+          data: {
+            chatId: chat.id,
+            groupId: chat.groupId,
+            recipientUserId: userId,
+          },
+        });
+        // Also fire a native system notification where supported.
         notifyChatMessage({
           recipientUserId: userId,
           chatId: chat.id,
