@@ -102,6 +102,13 @@ export interface Chat {
   createdAt: string;
 }
 
+export interface ChatFileAttachment {
+  name: string;
+  url: string;
+  type: string;
+  size: number;
+}
+
 export interface ChatMessage {
   id: string;
   chatId: string;
@@ -109,4 +116,5 @@ export interface ChatMessage {
   userName: string;
   text: string;
   createdAt: string;
+  attachment?: ChatFileAttachment;
 }

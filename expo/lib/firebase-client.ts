@@ -11,8 +11,8 @@ import {
 } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage } from 'firebase/storage';
-import { Event, Poll, PollOption, Chat, ChatMessage, ChatVisibility } from '@/types/event';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, FirebaseStorage, uploadString, StringFormat } from 'firebase/storage';
+import { Event, Poll, PollOption, Chat, ChatMessage, ChatVisibility, ChatFileAttachment } from '@/types/event';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -458,6 +458,69 @@ export const firebaseClient = {
       userId,
       userName,
       text,
+      createdAt: new Date().toISOString(),
+    };
+    await set(ref(database, `chats/${chatId}/messages/${messageId}`), message);
+    return message;
+  },
+
+  async uploadChatAttachment(chatId: string, userId: string, file: { name: string; uri: string; mimeType: string; size: number }): Promise<ChatFileAttachment> {
+    if (!storage) {
+      throw new Error('Firebase Storage is not configured. Please set EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET in your environment variables.');
+    }
+
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const timestamp = Date.now();
+    const fileName = `${timestamp}_${safeName}`;
+    const filePath = `chats/${chatId}/${fileName}`;
+    const fileRef = storageRef(storage, filePath);
+
+    const metadata = {
+      contentType: file.mimeType || 'application/octet-stream',
+      customMetadata: {
+        chatId,
+        userId,
+        uploadedAt: new Date().toISOString(),
+        originalName: file.name,
+      },
+    };
+
+    // Images: fetch -> blob -> uploadBytes. Text-like files: read -> uploadString.
+    const isImage = (file.mimeType || '').startsWith('image/');
+    const isTextLike = (file.mimeType || '').startsWith('text/') || file.name.endsWith('.json') || file.name.endsWith('.csv') || file.name.endsWith('.xml');
+
+    if (isImage || (!isTextLike && Platform.OS !== 'web')) {
+      const response = await fetch(file.uri);
+      const blob = await response.blob();
+      await uploadBytes(fileRef, blob, metadata);
+    } else if (isTextLike && Platform.OS === 'web') {
+      const textRes = await fetch(file.uri);
+      const text = await textRes.text();
+      await uploadString(fileRef, text, StringFormat.RAW, metadata);
+    } else {
+      const response = await fetch(file.uri);
+      const blob = await response.blob();
+      await uploadBytes(fileRef, blob, metadata);
+    }
+
+    const url = await getDownloadURL(fileRef);
+    return {
+      name: file.name,
+      url,
+      type: file.mimeType || 'application/octet-stream',
+      size: file.size,
+    };
+  },
+
+  async sendFileMessage(chatId: string, userId: string, userName: string, attachment: ChatFileAttachment, text: string = ''): Promise<ChatMessage> {
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const message: ChatMessage = {
+      id: messageId,
+      chatId,
+      userId,
+      userName,
+      text,
+      attachment,
       createdAt: new Date().toISOString(),
     };
     await set(ref(database, `chats/${chatId}/messages/${messageId}`), message);

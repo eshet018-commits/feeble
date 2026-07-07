@@ -1,6 +1,6 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useCallback, useState, useEffect, useRef } from 'react';
-import { Chat, ChatMessage, ChatVisibility } from '@/types/event';
+import { Chat, ChatMessage, ChatVisibility, ChatFileAttachment } from '@/types/event';
 import { useUser } from './UserContext';
 import { firebaseClient } from '@/lib/firebase-client';
 
@@ -80,6 +80,15 @@ export const [ChatProvider, useChats] = createContextHook(() => {
     [userId, userName]
   );
 
+  const sendFileMessage = useCallback(
+    async (chatId: string, file: { name: string; uri: string; mimeType: string; size: number }, caption?: string) => {
+      if (!userId) throw new Error('User not authenticated');
+      const attachment = await firebaseClient.uploadChatAttachment(chatId, userId, file);
+      await firebaseClient.sendFileMessage(chatId, userId, userName, attachment, caption?.trim() || '');
+    },
+    [userId, userName]
+  );
+
   const getMessagesForChat = useCallback(
     (chatId: string): ChatMessage[] => {
       return messages[chatId] || [];
@@ -97,6 +106,7 @@ export const [ChatProvider, useChats] = createContextHook(() => {
     updateChat,
     deleteChat,
     sendMessage,
+    sendFileMessage,
     getMessagesForChat,
   };
 });
