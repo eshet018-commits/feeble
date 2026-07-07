@@ -142,11 +142,7 @@ export default function EventDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             await deleteEvent(event.id);
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace('/');
-            }
+            router.replace('/');
           },
         },
       ]

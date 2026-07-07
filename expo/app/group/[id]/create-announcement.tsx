@@ -134,11 +134,7 @@ export default function CreateAnnouncementScreen() {
           poll: pollInput,
         });
       }
-      if (router.canGoBack()) {
-        router.back();
-      } else {
-        router.replace(`/group/${id}` as any);
-      }
+      router.replace(`/group/${id}` as any);
     } catch (e: any) {
       Alert.alert('Error', e?.message || `Failed to ${isEditing ? 'update' : 'create'} announcement`);
     }
