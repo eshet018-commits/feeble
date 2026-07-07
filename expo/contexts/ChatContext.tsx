@@ -7,9 +7,11 @@ import { useGroups } from './GroupContext';
 import { firebaseClient } from '@/lib/firebase-client';
 import {
   setActiveChat as setGlobalActiveChat,
+  isActiveChat,
   notifyChatMessage,
   markChatSeen,
   getChatLastSeen,
+  getChatNotifSettings,
 } from '@/utils/notifications';
 import { useNotifications } from './NotificationContext';
 
@@ -53,7 +55,7 @@ export const [ChatProvider, useChats] = createContextHook(() => {
 
     const unsub = firebaseClient.subscribeToAllChatMessages(
       groupIds,
-      (chat, message) => {
+      async (chat, message) => {
         if (message.userId === userId) return; // skip own messages
         if (notifiedMessageIds.current.has(message.id)) return;
         notifiedMessageIds.current.add(message.id);
@@ -63,6 +65,15 @@ export const [ChatProvider, useChats] = createContextHook(() => {
             Array.from(notifiedMessageIds.current).slice(-300),
           );
         }
+
+        // Suppress notifications for the chat the user is currently viewing.
+        if (isActiveChat(chat.id)) return;
+
+        // Respect the per-chat notification settings (notifications on/off).
+        // This makes the toggle work both ways: enable → banners show,
+        // disable → banners (and native alerts) are suppressed.
+        const settings = await getChatNotifSettings(userId, chat.id);
+        if (!settings.notificationsEnabled) return;
 
         // Instant in-app banner (works on all platforms, including web).
         showNotification({
@@ -75,7 +86,8 @@ export const [ChatProvider, useChats] = createContextHook(() => {
             recipientUserId: userId,
           },
         });
-        // Also fire a native system notification where supported.
+        // Also fire a native system notification where supported (respects
+        // sound / vibration settings internally).
         notifyChatMessage({
           recipientUserId: userId,
           chatId: chat.id,
@@ -88,7 +100,7 @@ export const [ChatProvider, useChats] = createContextHook(() => {
     );
 
     return () => unsub();
-  }, [userId, groupIdsKey]);
+  }, [userId, groupIdsKey, showNotification]);
 
   useEffect(() => {
     return () => {
