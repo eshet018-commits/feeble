@@ -1,6 +1,6 @@
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Megaphone, Clock, Send, BarChart3, Plus, X } from 'lucide-react-native';
-import React, { useState } from 'react';
+import { Megaphone, Clock, Send, BarChart3, Plus, X, Pencil } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -30,10 +30,15 @@ const DURATION_OPTIONS: { label: string; value: AnnouncementDuration; hint: stri
 
 export default function CreateAnnouncementScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const { createAnnouncement, isCreating } = useAnnouncements();
+  const { id, announcementId } = useLocalSearchParams<{ id: string; announcementId?: string }>();
+  const { createAnnouncement, updateAnnouncement, isCreating, announcements } = useAnnouncements();
   const { getGroupById, isGroupAdmin } = useGroups();
   const { userId, userName } = useUser();
+
+  const isEditing = Boolean(announcementId);
+  const existing = announcementId
+    ? announcements.find((a) => a.id === announcementId)
+    : null;
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -61,12 +66,26 @@ export default function CreateAnnouncementScreen() {
   const group = id ? getGroupById(id) : null;
   const admin = id ? isGroupAdmin(id) : false;
 
+  // Prefill fields when editing an existing announcement.
+  useEffect(() => {
+    if (existing) {
+      setTitle(existing.title);
+      setBody(existing.body);
+      setDurationHours(existing.durationHours);
+      if (existing.poll) {
+        setPollEnabled(true);
+        setPollQuestion(existing.poll.question);
+        setPollOptions(existing.poll.options.map((o) => o.text));
+      }
+    }
+  }, [existing]);
+
   if (!admin) {
     return (
       <View style={styles.accessDenied}>
         <Megaphone size={48} color="#CCC" />
         <Text style={styles.accessDeniedTitle}>Admins Only</Text>
-        <Text style={styles.accessDeniedText}>Only group admins can create announcements.</Text>
+        <Text style={styles.accessDeniedText}>Only group admins can {isEditing ? 'edit' : 'create'} announcements.</Text>
       </View>
     );
   }
@@ -98,22 +117,30 @@ export default function CreateAnnouncementScreen() {
     }
 
     try {
-      await createAnnouncement({
-        groupId: id,
-        title: title.trim(),
-        body: body.trim(),
-        createdBy: userId,
-        createdByName: userName || 'Admin',
-        durationHours,
-        poll: pollInput,
-      });
+      if (isEditing && announcementId) {
+        await updateAnnouncement(announcementId, {
+          title: title.trim(),
+          body: body.trim(),
+          durationHours,
+        });
+      } else {
+        await createAnnouncement({
+          groupId: id,
+          title: title.trim(),
+          body: body.trim(),
+          createdBy: userId,
+          createdByName: userName || 'Admin',
+          durationHours,
+          poll: pollInput,
+        });
+      }
       if (router.canGoBack()) {
         router.back();
       } else {
         router.replace(`/group/${id}` as any);
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Failed to create announcement');
+      Alert.alert('Error', e?.message || `Failed to ${isEditing ? 'update' : 'create'} announcement`);
     }
   };
 
@@ -129,8 +156,14 @@ export default function CreateAnnouncementScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.groupRow}>
-          <Megaphone size={18} color="#007AFF" />
-          <Text style={styles.groupName}>{group?.name || 'Group'}</Text>
+          {isEditing ? (
+            <Pencil size={18} color="#FF6B35" />
+          ) : (
+            <Megaphone size={18} color="#007AFF" />
+          )}
+          <Text style={[styles.groupName, isEditing && { color: '#FF6B35' }]}>
+            {isEditing ? 'Editing announcement' : group?.name || 'Group'}
+          </Text>
         </View>
 
         <Text style={styles.label}>Title</Text>
@@ -261,7 +294,9 @@ export default function CreateAnnouncementScreen() {
           activeOpacity={0.8}
         >
           <Send size={18} color="#FFF" />
-          <Text style={styles.submitText}>{isCreating ? 'Posting...' : 'Post Announcement'}</Text>
+          <Text style={styles.submitText}>
+            {isCreating ? 'Saving...' : isEditing ? 'Save Changes' : 'Post Announcement'}
+          </Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>

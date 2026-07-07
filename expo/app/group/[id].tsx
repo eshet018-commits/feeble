@@ -1,5 +1,5 @@
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { Calendar, Plus, Users, Settings, Repeat, UserPlus, LogOut, Zap, MessageCircle, Megaphone, Clock, Trash2, BarChart3, Check } from 'lucide-react-native';
+import { Calendar, Plus, Users, Settings, Repeat, UserPlus, LogOut, Zap, MessageCircle, Megaphone, Clock, Trash2, BarChart3, Check, Pencil } from 'lucide-react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -506,9 +506,17 @@ export default function GroupDetailScreen() {
                     <View style={styles.annHeader}>
                       <Text style={styles.annTitle}>{a.title}</Text>
                       {isAdmin && (
-                        <TouchableOpacity onPress={() => handleDeleteAnnouncement(a)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                          <Trash2 size={18} color="#FF3B30" />
-                        </TouchableOpacity>
+                        <View style={styles.annActions}>
+                          <TouchableOpacity
+                            onPress={() => router.push(`/group/${id}/create-announcement?announcementId=${a.id}` as any)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Pencil size={16} color="#007AFF" />
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => handleDeleteAnnouncement(a)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                            <Trash2 size={18} color="#FF3B30" />
+                          </TouchableOpacity>
+                        </View>
                       )}
                     </View>
                     <Text style={styles.annBodyText}>{a.body}</Text>
@@ -929,6 +937,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: 6,
+  },
+  annActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginLeft: 10,
   },
   annTitle: {
     flex: 1,
