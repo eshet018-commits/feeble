@@ -145,6 +145,56 @@ async function getGroupMemberTokens(
   }
 }
 
+/**
+ * Get group member push tokens, excluding any user who has muted the given
+ * chat. Reads `chatNotifSettings/{userId}/{chatId}` from Firebase.
+ */
+async function getGroupMemberTokensForChat(
+  groupId: string,
+  chatId: string,
+  excludeUserId?: string,
+): Promise<string[]> {
+  if (!database) return [];
+  const db = database;
+  try {
+    const membersSnap = await get(ref(db, 'members'));
+    if (!membersSnap.exists()) return [];
+
+    const members = Object.values(membersSnap.val()) as Array<{
+      userId: string;
+      groupId: string;
+    }>;
+    const userIds = members
+      .filter((m) => m.groupId === groupId && m.userId !== excludeUserId)
+      .map((m) => m.userId);
+
+    if (userIds.length === 0) return [];
+
+    const tokens: string[] = [];
+    await Promise.all(
+      userIds.map(async (uid) => {
+        try {
+          // Check per-chat mute setting.
+          const prefSnap = await get(ref(db, `chatNotifSettings/${uid}/${chatId}`));
+          if (prefSnap.exists()) {
+            const pref = prefSnap.val() as { notificationsEnabled?: boolean };
+            if (pref?.notificationsEnabled === false) return; // muted — skip
+          }
+          const tokenSnap = await get(ref(db, `pushTokens/${uid}`));
+          if (tokenSnap.exists()) {
+            const data = tokenSnap.val() as PushTokenEntry;
+            if (data?.token) tokens.push(data.token);
+          }
+        } catch {}
+      }),
+    );
+    return tokens;
+  } catch (error) {
+    console.error('[PushService] Failed to get member tokens:', error);
+    return [];
+  }
+}
+
 async function sendPushNotifications(
   tokens: string[],
   title: string,
@@ -261,7 +311,11 @@ async function handleNewChatMessage(
   const title = `${msg.userName} · ${meta.name}`;
   const body = msg.text || (msg.attachment ? msg.attachment.name : 'Sent a message');
 
-  const tokens = await getGroupMemberTokens(meta.groupId, msg.userId);
+  const tokens = await getGroupMemberTokensForChat(
+    meta.groupId,
+    chatId,
+    msg.userId,
+  );
   if (tokens.length === 0) return;
 
   await sendPushNotifications(tokens, title, body, {

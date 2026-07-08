@@ -929,6 +929,30 @@ export const firebaseClient = {
     return this.getPushTokensForUsers(userIds);
   },
 
+  // ---------------------------------------------------------------------------
+  // Per-chat notification preferences — stored under
+  // `chatNotifSettings/{userId}/{chatId}` so the backend push service can read
+  // them and suppress remote pushes for chats a user has muted.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Save a user's per-chat notification preference to Firebase.
+   * The backend push service reads this to decide whether to send a remote push.
+   */
+  async setChatNotifPreference(userId: string, chatId: string, notificationsEnabled: boolean): Promise<void> {
+    await set(ref(database, `chatNotifSettings/${userId}/${chatId}`), {
+      notificationsEnabled,
+      updatedAt: new Date().toISOString(),
+    });
+  },
+
+  /**
+   * Remove a user's per-chat notification preference (e.g. on sign-out).
+   */
+  async removeChatNotifPreference(userId: string, chatId: string): Promise<void> {
+    await remove(ref(database, `chatNotifSettings/${userId}/${chatId}`));
+  },
+
   /**
    * Permanently delete expired announcements for a group from the database.
    */

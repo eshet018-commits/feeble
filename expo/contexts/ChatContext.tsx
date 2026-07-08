@@ -242,6 +242,13 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       } catch (e) {
         console.warn('[Chat] Failed to save settings:', e);
       }
+      // Sync notificationsEnabled to Firebase so the backend push service
+      // can suppress remote pushes for muted chats.
+      if (updates.notificationsEnabled !== undefined) {
+        firebaseClient
+          .setChatNotifPreference(userId, chatId, updates.notificationsEnabled)
+          .catch((e) => console.warn('[Chat] Failed to sync notif pref to Firebase:', e));
+      }
     },
     [userId, chatSettings]
   );
