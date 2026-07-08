@@ -10,6 +10,7 @@ import {
   markAnnouncementSeen,
   isNotifSeenSync,
   markNotifSeen,
+  pushToGroupMembers,
 } from '@/utils/notifications';
 import { useNotifications } from './NotificationContext';
 
@@ -132,7 +133,25 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
     }) => {
       setIsCreating(true);
       try {
-        return await firebaseClient.createAnnouncement(data);
+        const announcement = await firebaseClient.createAnnouncement(data);
+
+        // Send a real remote push to all group members (excluding the admin
+        // who created it) so they get a home-screen notification even when
+        // the app is closed.
+        const groupName = groupNameById.current[data.groupId] || 'Group';
+        pushToGroupMembers({
+          groupId: data.groupId,
+          excludeUserId: data.createdBy,
+          title: `📢 ${groupName}`,
+          body: `New announcement: ${data.title}`,
+          data: {
+            kind: 'announcement',
+            announcementId: announcement.id,
+            groupId: data.groupId,
+          },
+        }).catch(() => {});
+
+        return announcement;
       } finally {
         setIsCreating(false);
       }

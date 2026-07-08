@@ -14,6 +14,7 @@ import {
   getChatNotifSettings,
   isNotifSeenSync,
   markNotifSeen,
+  pushToGroupMembers,
 } from '@/utils/notifications';
 import { useNotifications } from './NotificationContext';
 
@@ -181,9 +182,24 @@ export const [ChatProvider, useChats] = createContextHook(() => {
     async (chatId: string, text: string, replyTo?: { messageId: string; userName: string; text: string }) => {
       if (!userId) throw new Error('User not authenticated');
       if (!text.trim()) throw new Error('Message cannot be empty');
-      await firebaseClient.sendMessage(chatId, userId, userName, text.trim(), replyTo);
+      const message = await firebaseClient.sendMessage(chatId, userId, userName, text.trim(), replyTo);
+
+      // Send a real remote push to other group members so they get a
+      // home-screen notification even when the app is closed. The chat's
+      // group is looked up from the cached chats list.
+      const chat = chats.find((c) => c.id === chatId);
+      if (chat) {
+        pushToGroupMembers({
+          groupId: chat.groupId,
+          excludeUserId: userId,
+          title: `${userName} · ${chat.name}`,
+          body: text.trim() || 'Sent a message',
+          data: { kind: 'chat', chatId: chat.id, groupId: chat.groupId },
+        }).catch(() => {});
+      }
+      return message;
     },
-    [userId, userName]
+    [userId, userName, chats]
   );
 
   const sendFileMessage = useCallback(
@@ -191,8 +207,21 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       if (!userId) throw new Error('User not authenticated');
       const attachment = await firebaseClient.uploadChatAttachment(chatId, userId, file);
       await firebaseClient.sendFileMessage(chatId, userId, userName, attachment, caption?.trim() || '', replyTo);
+
+      // Remote push for file messages — home-screen notification even
+      // when the recipient's app is closed.
+      const chat = chats.find((c) => c.id === chatId);
+      if (chat) {
+        pushToGroupMembers({
+          groupId: chat.groupId,
+          excludeUserId: userId,
+          title: `${userName} · ${chat.name}`,
+          body: caption?.trim() || `Sent ${file.name}`,
+          data: { kind: 'chat', chatId: chat.id, groupId: chat.groupId },
+        }).catch(() => {});
+      }
     },
-    [userId, userName]
+    [userId, userName, chats]
   );
 
   const getMessagesForChat = useCallback(

@@ -861,6 +861,74 @@ export const firebaseClient = {
     return () => off(annRef);
   },
 
+  // ---------------------------------------------------------------------------
+  // Push notification tokens — each user's Expo push token is stored under
+  // `pushTokens/{userId}` so other devices can look it up and send remote
+  // pushes that appear on the iPhone home screen even when the app is closed.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Save (or replace) the Expo push token for a user.
+   */
+  async savePushToken(userId: string, token: string): Promise<void> {
+    await set(ref(database, `pushTokens/${userId}`), {
+      token,
+      updatedAt: new Date().toISOString(),
+    });
+  },
+
+  /**
+   * Remove the stored push token for a user (e.g. on sign-out).
+   */
+  async removePushToken(userId: string): Promise<void> {
+    await remove(ref(database, `pushTokens/${userId}`));
+  },
+
+  /**
+   * Look up the Expo push token for a single user. Returns null if none.
+   */
+  async getPushToken(userId: string): Promise<string | null> {
+    const snapshot = await get(ref(database, `pushTokens/${userId}`));
+    if (!snapshot.exists()) return null;
+    const val = snapshot.val();
+    return (val && val.token) || null;
+  },
+
+  /**
+   * Look up Expo push tokens for many users at once. Only users with a stored
+   * token are included in the result. Use this to fan-out a remote push to all
+   * members of a group.
+   */
+  async getPushTokensForUsers(userIds: string[]): Promise<Record<string, string>> {
+    if (userIds.length === 0) return {};
+    const result: Record<string, string> = {};
+    await Promise.all(
+      userIds.map(async (uid) => {
+        const token = await this.getPushToken(uid);
+        if (token) result[uid] = token;
+      }),
+    );
+    return result;
+  },
+
+  /**
+   * Get the Expo push tokens for every member of a group, optionally excluding
+   * one user (e.g. the sender so they don't notify themselves).
+   */
+  async getGroupMemberPushTokens(groupId: string, excludeUserId?: string): Promise<Record<string, string>> {
+    const membersRef = ref(database, 'members');
+    const q = query(membersRef, orderByChild('groupId'), equalTo(groupId));
+    const snapshot = await get(q);
+    if (!snapshot.exists()) return {};
+
+    const members = Object.values(snapshot.val()) as Array<{ userId: string; groupId: string }>;
+    const userIds = members
+      .filter((m) => m.groupId === groupId && m.userId !== excludeUserId)
+      .map((m) => m.userId);
+
+    return this.getPushTokensForUsers(userIds);
+  },
+
   /**
    * Permanently delete expired announcements for a group from the database.
    */

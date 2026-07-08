@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { Event } from '@/types/event';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { firebaseClient } from '@/lib/firebase-client';
 
 /**
  * Per-chat notification settings (mirrors ChatSettings notification fields).
@@ -181,10 +182,12 @@ export async function requestNotificationPermissions(): Promise<boolean> {
 
 /**
  * Register for remote push notifications and return the Expo push token.
- * On web or when permissions are denied, returns null.
- * The token is cached locally so we don't re-register on every launch.
+ * The token is saved to Firebase under `pushTokens/{userId}` so other devices
+ * can look it up and send remote pushes that appear on the iPhone home screen
+ * even when the app is closed. On web or when permissions are denied, returns
+ * null. The token is also cached locally so we don't re-register every launch.
  */
-export async function registerForPushNotifications(): Promise<string | null> {
+export async function registerForPushNotifications(userId?: string): Promise<string | null> {
   if (Platform.OS === 'web') {
     return null;
   }
@@ -195,20 +198,142 @@ export async function registerForPushNotifications(): Promise<string | null> {
     return null;
   }
 
-  // Return cached token if we already have one.
+  // Return cached token if we already have one for this session.
   try {
     const cached = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
-    if (cached) return cached;
+    if (cached) {
+      // Still persist to Firebase in case the user reinstalled or cleared DB.
+      if (userId) {
+        firebaseClient.savePushToken(userId, cached).catch((e) =>
+          console.warn('[Notifications] Failed to sync cached token:', e),
+        );
+      }
+      return cached;
+    }
   } catch {}
 
   try {
-    const token = (await Notifications.getDevicePushTokenAsync()).data;
+    const ticket = await Notifications.getExpoPushTokenAsync({
+      projectId: process.env.EXPO_PUBLIC_PROJECT_ID,
+    });
+    const token = ticket.data;
     await AsyncStorage.setItem(PUSH_TOKEN_KEY, token);
-    console.log('[Notifications] Push token:', token);
+    console.log('[Notifications] Expo push token:', token);
+    if (userId) {
+      await firebaseClient.savePushToken(userId, token);
+    }
     return token;
   } catch (error) {
-    console.error('[Notifications] Failed to get push token:', error);
+    console.error('[Notifications] Failed to get Expo push token:', error);
     return null;
+  }
+}
+
+/**
+ * Remove the stored push token for a user (call on sign-out).
+ */
+export async function unregisterPushToken(userId: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
+  } catch {}
+  try {
+    await firebaseClient.removePushToken(userId);
+  } catch (e) {
+    console.warn('[Notifications] Failed to remove push token from DB:', e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Remote push via the Expo Push API — sends real notifications that appear on
+// the iPhone home screen even when the app is closed or backgrounded. Works on
+// native iOS/Android only (web has no APNs/FCM delivery). The caller looks up
+// recipient push tokens from Firebase, then this function fans out the POST.
+// ---------------------------------------------------------------------------
+
+const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
+
+interface RemotePushPayload {
+  to: string;
+  title: string;
+  body: string;
+  data?: Record<string, any>;
+  sound?: boolean | string;
+  badge?: number;
+}
+
+/**
+ * Send remote push notifications to a set of Expo push tokens via the Expo
+ * Push API. Silently skips on web (no APNs/FCM delivery). Errors for individual
+ * recipients are logged but never thrown so the sender's action isn't blocked.
+ */
+export async function sendRemotePushes(
+  tokens: string[],
+  payload: { title: string; body: string; data?: Record<string, any>; sound?: boolean },
+): Promise<void> {
+  if (tokens.length === 0) return;
+  if (Platform.OS === 'web') return; // no native delivery on web
+
+  const messages: RemotePushPayload[] = tokens.map((to) => ({
+    to,
+    title: payload.title,
+    body: payload.body,
+    data: payload.data || {},
+    sound: payload.sound ?? true,
+  }));
+
+  try {
+    const res = await fetch(EXPO_PUSH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(messages),
+    });
+    const json = await res.json();
+    if (json?.errors) {
+      console.warn('[Notifications] Expo Push API errors:', json.errors);
+    }
+    if (Array.isArray(json?.data)) {
+      for (const ticket of json.data) {
+        if (ticket?.status === 'error') {
+          console.warn('[Notifications] Push ticket error:', ticket.message);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[Notifications] Failed to send remote pushes:', error);
+  }
+}
+
+/**
+ * Convenience: send a remote push to every member of a group (excluding the
+ * sender), looking up their Expo push tokens from Firebase. This is what the
+ * chat / announcement / event creation flows call so recipients get a real
+ * home-screen notification even when the app is closed.
+ */
+export async function pushToGroupMembers(params: {
+  groupId: string;
+  excludeUserId?: string;
+  title: string;
+  body: string;
+  data?: Record<string, any>;
+  sound?: boolean;
+}): Promise<void> {
+  try {
+    const tokensById = await firebaseClient.getGroupMemberPushTokens(
+      params.groupId,
+      params.excludeUserId,
+    );
+    const tokens = Object.values(tokensById);
+    if (tokens.length === 0) return;
+    await sendRemotePushes(tokens, {
+      title: params.title,
+      body: params.body,
+      data: params.data,
+      sound: params.sound,
+    });
+  } catch (error) {
+    console.error('[Notifications] pushToGroupMembers failed:', error);
   }
 }
 

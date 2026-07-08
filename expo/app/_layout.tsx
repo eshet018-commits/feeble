@@ -14,6 +14,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { trpc, trpcClient } from "@/lib/trpc";
 import {
   registerForPushNotifications,
+  unregisterPushToken,
   setupNotificationTapHandler,
   loadSeenNotifIds,
 } from "@/utils/notifications";
@@ -28,13 +29,27 @@ const queryClient = new QueryClient();
  */
 function NotificationBootstrap() {
   const router = useRouter();
+  const { userId, isAuthenticated } = useUser();
 
   useEffect(() => {
-    // Register for push notifications on launch.
-    registerForPushNotifications().catch((e) =>
+    // Register (or re-register) for remote push whenever the auth state
+    // changes. The Expo push token is saved to Firebase keyed by userId so
+    // other devices can send real home-screen notifications to this user.
+    if (!isAuthenticated || !userId) return;
+    registerForPushNotifications(userId).catch((e) =>
       console.warn("[Notifications] Registration failed:", e),
     );
+  }, [isAuthenticated, userId]);
 
+  // Remove the stored push token on sign-out so the user stops receiving
+  // pushes after logging out on this device.
+  useEffect(() => {
+    if (!isAuthenticated && userId) {
+      unregisterPushToken(userId).catch(() => {});
+    }
+  }, [isAuthenticated, userId]);
+
+  useEffect(() => {
     // Handle taps on notifications — deep-link into the relevant screen.
     const removeTap = setupNotificationTapHandler((data) => {
       const kind = data.kind as string | undefined;
