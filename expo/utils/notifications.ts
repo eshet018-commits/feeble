@@ -301,8 +301,6 @@ export async function unregisterPushToken(userId: string): Promise<void> {
 // recipient push tokens from Firebase, then this function fans out the POST.
 // ---------------------------------------------------------------------------
 
-const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
-
 interface RemotePushPayload {
   to: string;
   title: string;
@@ -313,20 +311,18 @@ interface RemotePushPayload {
 }
 
 /**
- * Send remote push notifications to a set of Expo push tokens via the Expo
- * Push API. Silently skips on web (no APNs/FCM delivery). Errors for individual
- * recipients are logged but never thrown so the sender's action isn't blocked.
+ * Send remote push notifications to a set of Expo push tokens via the backend
+ * tRPC endpoint, which proxies the Expo Push API server-side. This is required
+ * because exp.host does NOT send CORS headers, so a direct browser `fetch`
+ * (as happens in the Rork web preview) always fails with a TypeError. The
+ * backend has no same-origin restriction and can POST to exp.host freely.
+ * Errors are logged but never thrown so the sender's action isn't blocked.
  */
 export async function sendRemotePushes(
   tokens: string[],
   payload: { title: string; body: string; data?: Record<string, any>; sound?: boolean },
 ): Promise<void> {
   if (tokens.length === 0) return;
-  // NOTE: Do NOT bail on web — the Expo Push API is a plain REST endpoint
-  // (https://exp.host/--/api/v2/push/send) that works from any platform.
-  // This is what delivers real home-screen notifications to native devices
-  // (iPhone/Android) even when their app is closed. The web preview sends
-  // the push; the native device receives it via APNs/FCM.
 
   const messages: RemotePushPayload[] = tokens.map((to) => ({
     to,
@@ -337,24 +333,9 @@ export async function sendRemotePushes(
   }));
 
   try {
-    const res = await fetch(EXPO_PUSH_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(messages),
-    });
-    const json = await res.json();
-    if (json?.errors) {
-      console.warn('[Notifications] Expo Push API errors:', json.errors);
-    }
-    if (Array.isArray(json?.data)) {
-      for (const ticket of json.data) {
-        if (ticket?.status === 'error') {
-          console.warn('[Notifications] Push ticket error:', ticket.message);
-        }
-      }
-    }
+    // Route through the backend to avoid CORS — exp.host blocks browser fetches.
+    const { trpcClient } = await import('@/lib/trpc');
+    await trpcClient.notifications.send.mutate({ messages });
   } catch (error) {
     console.error('[Notifications] Failed to send remote pushes:', error);
   }
