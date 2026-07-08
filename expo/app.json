@@ -57,7 +57,7 @@
           "sounds": [
             "./local/assets/notification_sound.wav"
           ],
-          "enableBackgroundRemoteNotifications": false
+          "enableBackgroundRemoteNotifications": true
         }
       ],
       [

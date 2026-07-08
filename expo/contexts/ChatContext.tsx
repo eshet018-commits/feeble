@@ -14,7 +14,6 @@ import {
   getChatNotifSettings,
   isNotifSeenSync,
   markNotifSeen,
-  pushToGroupMembers,
 } from '@/utils/notifications';
 import { useNotifications } from './NotificationContext';
 
@@ -184,19 +183,9 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       if (!text.trim()) throw new Error('Message cannot be empty');
       const message = await firebaseClient.sendMessage(chatId, userId, userName, text.trim(), replyTo);
 
-      // Send a real remote push to other group members so they get a
-      // home-screen notification even when the app is closed. The chat's
-      // group is looked up from the cached chats list.
-      const chat = chats.find((c) => c.id === chatId);
-      if (chat) {
-        pushToGroupMembers({
-          groupId: chat.groupId,
-          excludeUserId: userId,
-          title: `${userName} · ${chat.name}`,
-          body: text.trim() || 'Sent a message',
-          data: { kind: 'chat', chatId: chat.id, groupId: chat.groupId },
-        }).catch(() => {});
-      }
+      // Remote push notifications are handled by the backend push service,
+      // which listens to Firebase and sends Expo pushes to all group members.
+      // This ensures notifications are delivered even when no client app is open.
       return message;
     },
     [userId, userName, chats]
@@ -208,18 +197,7 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       const attachment = await firebaseClient.uploadChatAttachment(chatId, userId, file);
       await firebaseClient.sendFileMessage(chatId, userId, userName, attachment, caption?.trim() || '', replyTo);
 
-      // Remote push for file messages — home-screen notification even
-      // when the recipient's app is closed.
-      const chat = chats.find((c) => c.id === chatId);
-      if (chat) {
-        pushToGroupMembers({
-          groupId: chat.groupId,
-          excludeUserId: userId,
-          title: `${userName} · ${chat.name}`,
-          body: caption?.trim() || `Sent ${file.name}`,
-          data: { kind: 'chat', chatId: chat.id, groupId: chat.groupId },
-        }).catch(() => {});
-      }
+      // Remote push notifications are handled by the backend push service.
     },
     [userId, userName, chats]
   );

@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
+import { startPushService } from "./push-service";
 
 const app = new Hono();
 
@@ -32,6 +33,12 @@ app.use(
     },
   }),
 );
+
+// Start the backend push notification service — listens to Firebase for
+// new chat messages, announcements, and events, and sends real Expo push
+// notifications to group members' devices. This runs on the always-on backend
+// so notifications are delivered even when no client app is open.
+startPushService();
 
 app.get("/", (c) => {
   return c.json({ status: "ok", message: "API is running" });

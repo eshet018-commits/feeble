@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Event, Category, ExpandedEvent, Poll, PollOption } from '@/types/event';
 import { DEFAULT_CATEGORIES } from '@/constants/categories';
-import { scheduleEventReminders, cancelEventReminders, isNotifSeenSync, markNotifSeen, pushToGroupMembers, notifyEvent } from '@/utils/notifications';
+import { scheduleEventReminders, cancelEventReminders, isNotifSeenSync, markNotifSeen, notifyEvent } from '@/utils/notifications';
 import { firebaseClient } from '@/lib/firebase-client';
 import { useGroups } from './GroupContext';
 import { useNotifications } from './NotificationContext';
@@ -123,19 +123,9 @@ export const [EventProvider, useEvents] = createContextHook(() => {
         console.warn('Failed to schedule event reminders:', notifError);
       }
 
-      // Send a real remote push to the other group members so they get a
-      // home-screen notification about the new event even when the app is
-      // closed. Only the creator is excluded.
-      if (event.groupId && userId) {
-        const groupName = groupNameById.current[event.groupId] || 'Group';
-        pushToGroupMembers({
-          groupId: event.groupId,
-          excludeUserId: userId,
-          title: `${groupName} · New Event`,
-          body: event.title,
-          data: { kind: 'event', eventId: result.id, groupId: event.groupId },
-        }).catch(() => {});
-      }
+      // Remote push notifications are handled by the backend push service,
+      // which listens to Firebase and sends Expo pushes to all group members.
+      // This ensures notifications are delivered even when no client app is open.
 
       return event;
     } catch (error: any) {
