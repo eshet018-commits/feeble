@@ -310,12 +310,19 @@ interface RemotePushPayload {
   badge?: number;
 }
 
+const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
+
 /**
- * Send remote push notifications to a set of Expo push tokens via the backend
- * tRPC endpoint, which proxies the Expo Push API server-side. This is required
- * because exp.host does NOT send CORS headers, so a direct browser `fetch`
- * (as happens in the Rork web preview) always fails with a TypeError. The
- * backend has no same-origin restriction and can POST to exp.host freely.
+ * Send remote push notifications to a set of Expo push tokens via the Expo
+ * Push API.
+ *
+ * On native (iOS/Android) we POST directly to exp.host — there are no CORS
+ * restrictions outside the browser, so this works reliably and delivers real
+ * APNs/FCM pushes to recipients' home screens even when their app is closed.
+ *
+ * On web (Rork preview runs in a browser) exp.host blocks cross-origin
+ * fetches, so we route through the backend tRPC proxy instead.
+ *
  * Errors are logged but never thrown so the sender's action isn't blocked.
  */
 export async function sendRemotePushes(
@@ -333,9 +340,44 @@ export async function sendRemotePushes(
   }));
 
   try {
-    // Route through the backend to avoid CORS — exp.host blocks browser fetches.
-    const { trpcClient } = await import('@/lib/trpc');
-    await trpcClient.notifications.send.mutate({ messages });
+    if (Platform.OS === 'web') {
+      // Web: exp.host blocks browser fetches (no CORS headers), so proxy
+      // through the backend tRPC endpoint which has no same-origin limit.
+      const { trpcClient } = await import('@/lib/trpc');
+      await trpcClient.notifications.send.mutate({ messages });
+    } else {
+      // Native: POST directly to the Expo Push API. No CORS on native, so
+      // this delivers real APNs/FCM pushes to home screens immediately.
+      // Batch in groups of 100 (Expo Push API limit per request).
+      for (let i = 0; i < messages.length; i += 100) {
+        const batch = messages.slice(i, i + 100);
+        const res = await fetch(EXPO_PUSH_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(batch),
+        });
+        const json = (await res.json()) as any;
+        if (json?.errors) {
+          console.error('[Notifications] Expo Push API errors:', json.errors);
+        }
+        if (Array.isArray(json?.data)) {
+          let ok = 0;
+          let fail = 0;
+          for (const ticket of json.data) {
+            if (ticket?.status === 'error') {
+              fail++;
+              console.warn('[Notifications] Push ticket error:', ticket.message, ticket.details);
+            } else {
+              ok++;
+            }
+          }
+          console.log(`[Notifications] Push batch: ${ok} delivered, ${fail} failed (${batch.length} tokens)`);
+        }
+      }
+    }
   } catch (error) {
     console.error('[Notifications] Failed to send remote pushes:', error);
   }
