@@ -342,9 +342,14 @@ export async function sendRemotePushes(
   try {
     if (Platform.OS === 'web') {
       // Web: exp.host blocks browser fetches (no CORS headers), so proxy
-      // through the backend tRPC endpoint which has no same-origin limit.
-      const { trpcClient } = await import('@/lib/trpc');
-      await trpcClient.notifications.send.mutate({ messages });
+      // through the backend REST endpoint which has no same-origin limit.
+      const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL;
+      if (!baseUrl) return;
+      await fetch(`${baseUrl}/api/push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages }),
+      });
     } else {
       // Native: POST directly to the Expo Push API. No CORS on native, so
       // this delivers real APNs/FCM pushes to home screens immediately.
@@ -361,7 +366,7 @@ export async function sendRemotePushes(
         });
         const json = (await res.json()) as any;
         if (json?.errors) {
-          console.error('[Notifications] Expo Push API errors:', json.errors);
+          console.warn('[Notifications] Expo Push API errors:', json.errors);
         }
         if (Array.isArray(json?.data)) {
           let ok = 0;
@@ -379,7 +384,9 @@ export async function sendRemotePushes(
       }
     }
   } catch (error) {
-    console.error('[Notifications] Failed to send remote pushes:', error);
+    // Fire-and-forget: log a soft warning but never throw, so the sender's
+    // action (creating a chat/event/announcement) is not blocked.
+    console.warn('[Notifications] Remote push failed (non-blocking):', error);
   }
 }
 
