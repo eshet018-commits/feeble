@@ -166,7 +166,16 @@ export function isActiveChat(chatId: string): boolean {
 
 export async function requestNotificationPermissions(): Promise<boolean> {
   if (Platform.OS === 'web') {
-    return true;
+    // Use the browser's Notifications API on web.
+    if (typeof Notification === 'undefined') return false;
+    if (Notification.permission === 'granted') return true;
+    if (Notification.permission === 'denied') return false;
+    try {
+      const result = await Notification.requestPermission();
+      return result === 'granted';
+    } catch {
+      return false;
+    }
   }
 
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -178,6 +187,48 @@ export async function requestNotificationPermissions(): Promise<boolean> {
   }
 
   return finalStatus === 'granted';
+}
+
+// ---------------------------------------------------------------------------
+// Web Notifications API — shows real OS-level notifications in the browser
+// even when the tab is in the background. No-op on native (uses expo-notifications
+// there instead). Requires the user to grant notification permission.
+// ---------------------------------------------------------------------------
+
+/**
+ * Show a notification via the browser's Web Notifications API. Returns true if
+ * shown, false if not supported or permission not granted. On native, returns
+ * false (use expo-notifications functions instead).
+ */
+export function showWebNotification(
+  title: string,
+  body: string,
+  data?: Record<string, any>,
+): boolean {
+  if (Platform.OS !== 'web') return false;
+  if (typeof Notification === 'undefined') return false;
+  if (Notification.permission !== 'granted') return false;
+
+  try {
+    const notif = new Notification(title, {
+      body,
+      data: data,
+      icon: '/icon.png',
+      tag: data?.chatId || data?.announcementId || data?.eventId,
+    });
+    // Auto-close after 6 seconds to avoid clutter.
+    setTimeout(() => notif.close(), 6000);
+    // Handle click — focus the window (the tap handler in _layout also fires
+    // for expo-notifications, but Web Notifications need their own click handler).
+    notif.onclick = () => {
+      window.focus();
+      notif.close();
+    };
+    return true;
+  } catch (e) {
+    console.warn('[Notifications] Web notification failed:', e);
+    return false;
+  }
 }
 
 /**
@@ -271,7 +322,11 @@ export async function sendRemotePushes(
   payload: { title: string; body: string; data?: Record<string, any>; sound?: boolean },
 ): Promise<void> {
   if (tokens.length === 0) return;
-  if (Platform.OS === 'web') return; // no native delivery on web
+  // NOTE: Do NOT bail on web — the Expo Push API is a plain REST endpoint
+  // (https://exp.host/--/api/v2/push/send) that works from any platform.
+  // This is what delivers real home-screen notifications to native devices
+  // (iPhone/Android) even when their app is closed. The web preview sends
+  // the push; the native device receives it via APNs/FCM.
 
   const messages: RemotePushPayload[] = tokens.map((to) => ({
     to,
@@ -418,11 +473,20 @@ export async function notifyChatMessage(params: {
   senderName: string;
   text: string;
 }): Promise<void> {
-  if (Platform.OS === 'web') return;
   if (isActiveChat(params.chatId)) return;
 
   const settings = await getChatNotifSettings(params.recipientUserId, params.chatId);
   if (!settings.notificationsEnabled) return;
+
+  // On web, use the browser's Notifications API for an OS-level notification.
+  if (Platform.OS === 'web') {
+    showWebNotification(
+      `${params.senderName} · ${params.chatName}`,
+      params.text || 'Sent a message',
+      { kind: 'chat', chatId: params.chatId, groupId: params.groupId },
+    );
+    return;
+  }
 
   try {
     await Notifications.scheduleNotificationAsync({
@@ -454,9 +518,17 @@ export async function notifyAnnouncement(params: {
   groupName: string;
   title: string;
 }): Promise<void> {
-  if (Platform.OS === 'web') return;
-
   if (await isAnnouncementSeen(params.recipientUserId, params.announcementId)) return;
+
+  // On web, use the browser's Notifications API.
+  if (Platform.OS === 'web') {
+    showWebNotification(
+      `📢 ${params.groupName}`,
+      `New announcement: ${params.title}`,
+      { kind: 'announcement', announcementId: params.announcementId, groupId: params.groupId },
+    );
+    return;
+  }
 
   try {
     await Notifications.scheduleNotificationAsync({
@@ -475,6 +547,44 @@ export async function notifyAnnouncement(params: {
     });
   } catch (error) {
     console.error('[Notifications] Failed to notify announcement:', error);
+  }
+}
+
+/**
+ * Fire a local notification for a new event. Uses the browser's Notifications
+ * API on web, expo-notifications on native.
+ */
+export async function notifyEvent(params: {
+  groupId: string;
+  groupName: string;
+  eventId: string;
+  title: string;
+}): Promise<void> {
+  if (Platform.OS === 'web') {
+    showWebNotification(
+      `${params.groupName} · New Event`,
+      params.title,
+      { kind: 'event', eventId: params.eventId, groupId: params.groupId },
+    );
+    return;
+  }
+
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: `${params.groupName} · New Event`,
+        body: params.title,
+        data: {
+          kind: 'event',
+          eventId: params.eventId,
+          groupId: params.groupId,
+        },
+        sound: true,
+      },
+      trigger: null,
+    });
+  } catch (error) {
+    console.error('[Notifications] Failed to notify event:', error);
   }
 }
 

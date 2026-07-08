@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Event, Category, ExpandedEvent, Poll, PollOption } from '@/types/event';
 import { DEFAULT_CATEGORIES } from '@/constants/categories';
-import { scheduleEventReminders, cancelEventReminders, isNotifSeenSync, markNotifSeen, pushToGroupMembers } from '@/utils/notifications';
+import { scheduleEventReminders, cancelEventReminders, isNotifSeenSync, markNotifSeen, pushToGroupMembers, notifyEvent } from '@/utils/notifications';
 import { firebaseClient } from '@/lib/firebase-client';
 import { useGroups } from './GroupContext';
 import { useNotifications } from './NotificationContext';
@@ -58,6 +58,13 @@ export const [EventProvider, useEvents] = createContextHook(() => {
             body: ev.title,
             data: { eventId: ev.id, groupId: ev.groupId },
           });
+          // Also fire a native / web OS-level notification.
+          notifyEvent({
+            groupId: ev.groupId,
+            groupName: groupNameById.current[ev.groupId] || 'Group',
+            eventId: ev.id,
+            title: ev.title,
+          }).catch(() => {});
         }
       }
       setEvents(fetchedEvents);

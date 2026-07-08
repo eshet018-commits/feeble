@@ -17,6 +17,7 @@ import {
   unregisterPushToken,
   setupNotificationTapHandler,
   loadSeenNotifIds,
+  requestNotificationPermissions,
 } from "@/utils/notifications";
 
 SplashScreen.preventAutoHideAsync();
@@ -36,6 +37,9 @@ function NotificationBootstrap() {
     // changes. The Expo push token is saved to Firebase keyed by userId so
     // other devices can send real home-screen notifications to this user.
     if (!isAuthenticated || !userId) return;
+    // On web, request browser notification permission so OS-level
+    // notifications appear even when the tab is in the background.
+    requestNotificationPermissions().catch(() => {});
     registerForPushNotifications(userId).catch((e) =>
       console.warn("[Notifications] Registration failed:", e),
     );
