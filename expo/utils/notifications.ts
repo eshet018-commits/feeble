@@ -373,6 +373,56 @@ export async function pushToGroupMembers(params: {
   }
 }
 
+/**
+ * Like pushToGroupMembers, but for chat messages: skips any member who has
+ * muted notifications for this specific chat. Reads `chatNotifSettings/{uid}/{chatId}`
+ * from Firebase to check each member's preference.
+ */
+export async function pushChatMessageToGroupMembers(params: {
+  groupId: string;
+  chatId: string;
+  excludeUserId?: string;
+  title: string;
+  body: string;
+  data?: Record<string, any>;
+  sound?: boolean;
+}): Promise<void> {
+  try {
+    const tokensById = await firebaseClient.getGroupMemberPushTokens(
+      params.groupId,
+      params.excludeUserId,
+    );
+    const userIds = Object.keys(tokensById);
+    if (userIds.length === 0) return;
+
+    // Filter out members who have muted this chat.
+    const enabledTokens: string[] = [];
+    await Promise.all(
+      userIds.map(async (uid) => {
+        try {
+          const muted = await firebaseClient.isChatMuted(uid, params.chatId);
+          if (!muted) {
+            enabledTokens.push(tokensById[uid]);
+          }
+        } catch {
+          // If we can't check, include the token (default to sending).
+          enabledTokens.push(tokensById[uid]);
+        }
+      }),
+    );
+
+    if (enabledTokens.length === 0) return;
+    await sendRemotePushes(enabledTokens, {
+      title: params.title,
+      body: params.body,
+      data: params.data,
+      sound: params.sound,
+    });
+  } catch (error) {
+    console.error('[Notifications] pushChatMessageToGroupMembers failed:', error);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Event reminder scheduling
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import {
   setActiveChat as setGlobalActiveChat,
   isActiveChat,
   notifyChatMessage,
+  pushChatMessageToGroupMembers,
   markChatSeen,
   getChatLastSeen,
   getChatNotifSettings,
@@ -183,9 +184,21 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       if (!text.trim()) throw new Error('Message cannot be empty');
       const message = await firebaseClient.sendMessage(chatId, userId, userName, text.trim(), replyTo);
 
-      // Remote push notifications are handled by the backend push service,
-      // which listens to Firebase and sends Expo pushes to all group members.
-      // This ensures notifications are delivered even when no client app is open.
+      // Send remote push notifications so recipients see them on their home
+      // screen even when the app is closed. The backend push service can't
+      // access Firebase (permission_denied), so the creating client (which is
+      // authenticated) sends the pushes via the backend tRPC proxy.
+      const chat = chats.find((c) => c.id === chatId);
+      if (chat) {
+        pushChatMessageToGroupMembers({
+          groupId: chat.groupId,
+          chatId,
+          excludeUserId: userId,
+          title: `${userName} · ${chat.name}`,
+          body: text.trim(),
+          data: { kind: 'chat', chatId, groupId: chat.groupId },
+        }).catch((e) => console.warn('[Chat] Remote push failed:', e));
+      }
       return message;
     },
     [userId, userName, chats]
@@ -197,7 +210,18 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       const attachment = await firebaseClient.uploadChatAttachment(chatId, userId, file);
       await firebaseClient.sendFileMessage(chatId, userId, userName, attachment, caption?.trim() || '', replyTo);
 
-      // Remote push notifications are handled by the backend push service.
+      // Send remote push so recipients see the file message on their home screen.
+      const chat = chats.find((c) => c.id === chatId);
+      if (chat) {
+        pushChatMessageToGroupMembers({
+          groupId: chat.groupId,
+          chatId,
+          excludeUserId: userId,
+          title: `${userName} · ${chat.name}`,
+          body: caption?.trim() || file.name,
+          data: { kind: 'chat', chatId, groupId: chat.groupId },
+        }).catch((e) => console.warn('[Chat] Remote push failed:', e));
+      }
     },
     [userId, userName, chats]
   );

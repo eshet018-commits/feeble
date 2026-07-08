@@ -6,6 +6,7 @@ import { useUser } from './UserContext';
 import { useGroups } from './GroupContext';
 import {
   notifyAnnouncement,
+  pushToGroupMembers,
   isAnnouncementSeen,
   markAnnouncementSeen,
   isNotifSeenSync,
@@ -134,9 +135,17 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
       try {
         const announcement = await firebaseClient.createAnnouncement(data);
 
-        // Remote push notifications are handled by the backend push service,
-        // which listens to Firebase and sends Expo pushes to all group members.
-        // This ensures notifications are delivered even when no client app is open.
+        // Send remote push notifications so recipients see them on their home
+        // screen even when the app is closed. The backend push service can't
+        // access Firebase (permission_denied), so the creating client sends
+        // pushes via the backend tRPC proxy.
+        pushToGroupMembers({
+          groupId: data.groupId,
+          excludeUserId: data.createdBy,
+          title: `📢 ${announcement.title}`,
+          body: data.body || 'New announcement',
+          data: { kind: 'announcement', announcementId: announcement.id, groupId: data.groupId },
+        }).catch((e) => console.warn('[Announcement] Remote push failed:', e));
         return announcement;
       } finally {
         setIsCreating(false);

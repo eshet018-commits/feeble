@@ -954,6 +954,21 @@ export const firebaseClient = {
   },
 
   /**
+   * Check if a user has muted notifications for a specific chat.
+   * Returns true if `chatNotifSettings/{userId}/{chatId}.notificationsEnabled` is false.
+   */
+  async isChatMuted(userId: string, chatId: string): Promise<boolean> {
+    try {
+      const snapshot = await get(ref(database, `chatNotifSettings/${userId}/${chatId}`));
+      if (!snapshot.exists()) return false;
+      const val = snapshot.val();
+      return val?.notificationsEnabled === false;
+    } catch {
+      return false;
+    }
+  },
+
+  /**
    * Permanently delete expired announcements for a group from the database.
    */
   async cleanupExpiredAnnouncements(groupId: string): Promise<void> {
