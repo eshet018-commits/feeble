@@ -51,8 +51,8 @@ try {
         }
       });
       signInAnonymously(auth).catch((err) => {
-        console.error('[Backend Auth] Anonymous sign-in failed:', err);
-        console.error('[Backend Auth] Enable Anonymous Auth in Firebase Console → Authentication → Sign-in method');
+        console.warn('[Backend Auth] Anonymous sign-in failed:', err?.code || err?.message || err);
+        console.warn('[Backend Auth] Enable Anonymous Auth in Firebase Console → Authentication → Sign-in method');
         unsub();
         resolve(); // Resolve anyway so the push service can attempt to start
       });
