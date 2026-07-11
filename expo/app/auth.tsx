@@ -52,7 +52,7 @@ export default function AuthScreen() {
         [{ text: 'OK' }]
       );
     } catch (error: any) {
-      console.error('[Auth] Password reset error:', error);
+      console.warn('[Auth] Password reset error:', error?.code || error?.message || 'unknown');
       
       let errorMessage = 'Failed to send reset email';
       
@@ -130,7 +130,7 @@ export default function AuthScreen() {
       
       router.replace('/');
     } catch (error: any) {
-      console.error('[Auth] Authentication error:', error);
+      console.warn('[Auth] Authentication error:', error?.code || error?.message || 'unknown');
       
       let errorMessage = 'Authentication failed';
       
