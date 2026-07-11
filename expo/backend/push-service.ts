@@ -1,17 +1,17 @@
-import { ref, onValue, get, off } from 'firebase/database';
-import { database, isConfigured, authReadyPromise } from './firebase';
+import { database, messaging, isConfigured } from './firebase';
 
 /**
- * Backend push notification service.
+ * Backend push notification service using Firebase Admin SDK.
  *
- * Listens to Firebase Realtime Database for new chat messages, announcements,
- * and events. When a new item is created, it looks up the Expo push tokens of
- * all group members and sends real remote push notifications via the Expo Push
- * API. These are delivered by APNs/FCM to the device's home screen / lock
- * screen even when the app is fully closed or backgrounded.
+ * Uses the Admin SDK which bypasses all security rules — no more
+ * PERMISSION_DENIED errors. Listens to the Realtime Database for new chat
+ * messages, announcements, and events. When new content is created, it sends
+ * real push notifications:
+ *   - FCM tokens (web) via admin.messaging().sendEachForMulticast()
+ *   - Expo push tokens (native iOS/Android) via the Expo Push API
  *
- * This runs on the backend (always-on server process) so notifications are
- * sent regardless of whether any client app is open.
+ * These are delivered to the device's home screen / lock screen even when the
+ * app is fully closed or backgrounded.
  */
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
@@ -73,6 +73,7 @@ const seenMessageIds = new Set<string>();
 const seenAnnouncementIds = new Set<string>();
 const seenEventIds = new Set<string>();
 
+const chatMessageCallbacks = new Map<string, (a: any, b: any) => void>();
 const chatMessageUnsubs = new Map<string, () => void>();
 const initializedChats = new Set<string>();
 let announcementsInitialized = false;
@@ -96,7 +97,7 @@ async function getGroupName(groupId: string): Promise<string> {
   if (cached) return cached;
   if (!database) return 'Group';
   try {
-    const snap = await get(ref(database, `groups/${groupId}`));
+    const snap = await database.ref(`groups/${groupId}`).get();
     if (snap.exists()) {
       const name = (snap.val() as any)?.name || 'Group';
       groupNameCache.set(groupId, name);
@@ -106,6 +107,10 @@ async function getGroupName(groupId: string): Promise<string> {
   return 'Group';
 }
 
+function isExpoPushToken(token: string): boolean {
+  return token.startsWith('ExponentPushToken');
+}
+
 async function getGroupMemberTokens(
   groupId: string,
   excludeUserId?: string,
@@ -113,7 +118,7 @@ async function getGroupMemberTokens(
   if (!database) return [];
   const db = database;
   try {
-    const membersSnap = await get(ref(db, 'members'));
+    const membersSnap = await db.ref('members').get();
     if (!membersSnap.exists()) return [];
 
     const members = Object.values(membersSnap.val()) as Array<{
@@ -130,7 +135,52 @@ async function getGroupMemberTokens(
     await Promise.all(
       userIds.map(async (uid) => {
         try {
-          const tokenSnap = await get(ref(db, `pushTokens/${uid}`));
+          const tokenSnap = await db.ref(`pushTokens/${uid}`).get();
+          if (tokenSnap.exists()) {
+            const data = tokenSnap.val() as PushTokenEntry;
+            if (data?.token) tokens.push(data.token);
+          }
+        } catch {}
+      }),
+    );
+    return tokens;
+  } catch (error) {
+    console.warn('[PushService] Failed to get member tokens:', error);
+    return [];
+  }
+}
+
+async function getGroupMemberTokensForChat(
+  groupId: string,
+  chatId: string,
+  excludeUserId?: string,
+): Promise<string[]> {
+  if (!database) return [];
+  const db = database;
+  try {
+    const membersSnap = await db.ref('members').get();
+    if (!membersSnap.exists()) return [];
+
+    const members = Object.values(membersSnap.val()) as Array<{
+      userId: string;
+      groupId: string;
+    }>;
+    const userIds = members
+      .filter((m) => m.groupId === groupId && m.userId !== excludeUserId)
+      .map((m) => m.userId);
+
+    if (userIds.length === 0) return [];
+
+    const tokens: string[] = [];
+    await Promise.all(
+      userIds.map(async (uid) => {
+        try {
+          const prefSnap = await db.ref(`chatNotifSettings/${uid}/${chatId}`).get();
+          if (prefSnap.exists()) {
+            const pref = prefSnap.val() as { notificationsEnabled?: boolean };
+            if (pref?.notificationsEnabled === false) return;
+          }
+          const tokenSnap = await db.ref(`pushTokens/${uid}`).get();
           if (tokenSnap.exists()) {
             const data = tokenSnap.val() as PushTokenEntry;
             if (data?.token) tokens.push(data.token);
@@ -146,55 +196,9 @@ async function getGroupMemberTokens(
 }
 
 /**
- * Get group member push tokens, excluding any user who has muted the given
- * chat. Reads `chatNotifSettings/{userId}/{chatId}` from Firebase.
+ * Send push notifications to a list of tokens. FCM tokens (web) are sent via
+ * admin.messaging(); Expo push tokens (native) are sent via the Expo Push API.
  */
-async function getGroupMemberTokensForChat(
-  groupId: string,
-  chatId: string,
-  excludeUserId?: string,
-): Promise<string[]> {
-  if (!database) return [];
-  const db = database;
-  try {
-    const membersSnap = await get(ref(db, 'members'));
-    if (!membersSnap.exists()) return [];
-
-    const members = Object.values(membersSnap.val()) as Array<{
-      userId: string;
-      groupId: string;
-    }>;
-    const userIds = members
-      .filter((m) => m.groupId === groupId && m.userId !== excludeUserId)
-      .map((m) => m.userId);
-
-    if (userIds.length === 0) return [];
-
-    const tokens: string[] = [];
-    await Promise.all(
-      userIds.map(async (uid) => {
-        try {
-          // Check per-chat mute setting.
-          const prefSnap = await get(ref(db, `chatNotifSettings/${uid}/${chatId}`));
-          if (prefSnap.exists()) {
-            const pref = prefSnap.val() as { notificationsEnabled?: boolean };
-            if (pref?.notificationsEnabled === false) return; // muted — skip
-          }
-          const tokenSnap = await get(ref(db, `pushTokens/${uid}`));
-          if (tokenSnap.exists()) {
-            const data = tokenSnap.val() as PushTokenEntry;
-            if (data?.token) tokens.push(data.token);
-          }
-        } catch {}
-      }),
-    );
-    return tokens;
-  } catch (error) {
-    console.warn('[PushService] Failed to get member tokens:', error);
-    return [];
-  }
-}
-
 async function sendPushNotifications(
   tokens: string[],
   title: string,
@@ -203,57 +207,93 @@ async function sendPushNotifications(
 ): Promise<void> {
   if (tokens.length === 0) return;
 
-  // Expo Push API accepts up to 100 messages per request.
-  const batches: string[][] = [];
-  for (let i = 0; i < tokens.length; i += 100) {
-    batches.push(tokens.slice(i, i + 100));
-  }
+  const fcmTokens = tokens.filter((t) => !isExpoPushToken(t));
+  const expoTokens = tokens.filter((t) => isExpoPushToken(t));
 
-  for (const batch of batches) {
-    const messages = batch.map((to) => ({
-      to,
-      title,
-      body,
-      data: data || {},
-      sound: true,
-      priority: 'high',
-    }));
-
+  // Send FCM pushes (web tokens) via Admin SDK messaging.
+  if (fcmTokens.length > 0 && messaging) {
     try {
-      const res = await fetch(EXPO_PUSH_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify(messages),
-      });
-      const json = (await res.json()) as any;
-
-      if (json?.errors) {
-        console.warn('[PushService] Expo Push API errors:', json.errors);
+      // sendEachForMulticast handles batches internally (up to 500 per call).
+      const messageData: Record<string, string> = {};
+      if (data) {
+        for (const [k, v] of Object.entries(data)) {
+          messageData[k] = typeof v === 'string' ? v : JSON.stringify(v);
+        }
       }
-      if (Array.isArray(json?.data)) {
+
+      const batchChunks: string[][] = [];
+      for (let i = 0; i < fcmTokens.length; i += 500) {
+        batchChunks.push(fcmTokens.slice(i, i + 500));
+      }
+
+      for (const chunk of batchChunks) {
+        const response = await messaging.sendEachForMulticast({
+          tokens: chunk,
+          notification: { title, body },
+          data: messageData,
+          android: { priority: 'high' },
+        });
+
         let ok = 0;
         let fail = 0;
-        for (const ticket of json.data) {
-          if (ticket?.status === 'error') {
-            fail++;
-            console.warn(
-              '[PushService] Push ticket error:',
-              ticket.message,
-              ticket.details,
-            );
-          } else {
-            ok++;
-          }
+        for (const r of response.responses) {
+          if (r.success) ok++;
+          else fail++;
         }
         console.log(
-          `[PushService] Push batch: ${ok} delivered, ${fail} failed (${batch.length} tokens)`,
+          `[PushService] FCM batch: ${ok} delivered, ${fail} failed (${chunk.length} tokens)`,
         );
       }
     } catch (error) {
-      console.warn('[PushService] Failed to send push batch:', error);
+      console.warn('[PushService] FCM send failed:', error);
+    }
+  }
+
+  // Send Expo pushes (native tokens) via the Expo Push API.
+  if (expoTokens.length > 0) {
+    for (let i = 0; i < expoTokens.length; i += 100) {
+      const batch = expoTokens.slice(i, i + 100);
+      const messages = batch.map((to) => ({
+        to,
+        title,
+        body,
+        data: data || {},
+        sound: true,
+        priority: 'high',
+      }));
+
+      try {
+        const res = await fetch(EXPO_PUSH_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(messages),
+        });
+        const json = (await res.json()) as any;
+
+        if (json?.errors) {
+          console.warn('[PushService] Expo Push API errors:', json.errors);
+        }
+        if (Array.isArray(json?.data)) {
+          let ok = 0;
+          let fail = 0;
+          for (const ticket of json.data) {
+            if (ticket?.status === 'error') {
+              fail++;
+              console.warn('[PushService] Push ticket error:', ticket.message, ticket.details);
+            } else {
+              ok++;
+            }
+          }
+          console.log(
+            `[PushService] Expo batch: ${ok} delivered, ${fail} failed (${batch.length} tokens)`,
+          );
+        }
+      } catch (error) {
+        console.warn('[PushService] Failed to send Expo push batch:', error);
+      }
     }
   }
 }
@@ -265,40 +305,39 @@ async function sendPushNotifications(
 function subscribeToChatMessages(chatId: string): void {
   if (!database || chatMessageUnsubs.has(chatId)) return;
 
-  const messagesRef = ref(database, `chats/${chatId}/messages`);
+  const messagesRef = database.ref(`chats/${chatId}/messages`);
 
-  const unsub = onValue(
-    messagesRef,
-    (snapshot) => {
-      if (!initializedChats.has(chatId)) {
-        // First load — mark all existing messages as seen, don't push.
-        if (snapshot.exists()) {
-          const msgs = snapshot.val() as Record<string, ChatMessageData>;
-          Object.keys(msgs).forEach((id) => seenMessageIds.add(id));
-        }
-        initializedChats.add(chatId);
-        return;
+  const callback = (snapshot: any) => {
+    if (!initializedChats.has(chatId)) {
+      if (snapshot.exists()) {
+        const msgs = snapshot.val() as Record<string, ChatMessageData>;
+        Object.keys(msgs).forEach((id) => seenMessageIds.add(id));
       }
+      initializedChats.add(chatId);
+      return;
+    }
 
-      if (!snapshot.exists()) return;
+    if (!snapshot.exists()) return;
 
-      const msgs = snapshot.val() as Record<string, ChatMessageData>;
-      for (const [msgId, msg] of Object.entries(msgs)) {
-        if (seenMessageIds.has(msgId)) continue;
-        seenMessageIds.add(msgId);
-        trimSet(seenMessageIds);
+    const msgs = snapshot.val() as Record<string, ChatMessageData>;
+    for (const [msgId, msg] of Object.entries(msgs)) {
+      if (seenMessageIds.has(msgId)) continue;
+      seenMessageIds.add(msgId);
+      trimSet(seenMessageIds);
 
-        handleNewChatMessage(chatId, msg).catch((e) =>
-          console.warn('[PushService] Chat message handler error:', e),
-        );
-      }
-    },
-    (error) => {
-      console.warn(`[PushService] Messages listener error for ${chatId}:`, error);
-    },
-  );
+      handleNewChatMessage(chatId, msg).catch((e) =>
+        console.warn('[PushService] Chat message handler error:', e),
+      );
+    }
+  };
 
-  chatMessageUnsubs.set(chatId, () => off(messagesRef));
+  const errorCallback = (error: any) => {
+    console.warn(`[PushService] Messages listener error for ${chatId}:`, error);
+  };
+
+  messagesRef.on('value', callback, errorCallback);
+  chatMessageCallbacks.set(chatId, callback);
+  chatMessageUnsubs.set(chatId, () => messagesRef.off('value', callback));
 }
 
 async function handleNewChatMessage(
@@ -328,46 +367,44 @@ async function handleNewChatMessage(
 function startChatListener(): void {
   if (!database) return;
 
-  const chatsRef = ref(database, 'chats');
-  onValue(
-    chatsRef,
-    (snapshot) => {
-      const newChatIds = new Set<string>();
+  const chatsRef = database.ref('chats');
+  const callback = (snapshot: any) => {
+    const newChatIds = new Set<string>();
 
-      if (snapshot.exists()) {
-        const chats = snapshot.val() as Record<string, ChatData>;
-        for (const [id, chat] of Object.entries(chats)) {
-          chatCache.set(id, { groupId: chat.groupId, name: chat.name });
-          newChatIds.add(id);
+    if (snapshot.exists()) {
+      const chats = snapshot.val() as Record<string, ChatData>;
+      for (const [id, chat] of Object.entries(chats)) {
+        chatCache.set(id, { groupId: chat.groupId, name: chat.name });
+        newChatIds.add(id);
 
-          if (!chatMessageUnsubs.has(id)) {
-            subscribeToChatMessages(id);
-          }
+        if (!chatMessageUnsubs.has(id)) {
+          subscribeToChatMessages(id);
         }
       }
+    }
 
-      // Unsubscribe from removed chats.
-      for (const [chatId, unsub] of chatMessageUnsubs) {
-        if (!newChatIds.has(chatId)) {
-          unsub();
-          chatMessageUnsubs.delete(chatId);
-          chatCache.delete(chatId);
-          initializedChats.delete(chatId);
-        }
+    for (const [chatId, unsub] of chatMessageUnsubs) {
+      if (!newChatIds.has(chatId)) {
+        unsub();
+        chatMessageUnsubs.delete(chatId);
+        chatMessageCallbacks.delete(chatId);
+        chatCache.delete(chatId);
+        initializedChats.delete(chatId);
       }
+    }
 
-      if (!chatsInitialized) {
-        chatsInitialized = true;
-        const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
-        console.log(
-          `[PushService] Chat listener initialized — ${count} existing chat(s)`,
-        );
-      }
-    },
-    (error) => {
-      console.warn('[PushService] Chats listener error:', error);
-    },
-  );
+    if (!chatsInitialized) {
+      chatsInitialized = true;
+      const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
+      console.log(`[PushService] Chat listener initialized — ${count} existing chat(s)`);
+    }
+  };
+
+  const errorCallback = (error: any) => {
+    console.warn('[PushService] Chats listener error:', error);
+  };
+
+  chatsRef.on('value', callback, errorCallback);
 }
 
 // ---------------------------------------------------------------------------
@@ -392,48 +429,45 @@ async function handleNewAnnouncement(ann: AnnouncementData): Promise<void> {
 function startAnnouncementListener(): void {
   if (!database) return;
 
-  const annRef = ref(database, 'announcements');
-  onValue(
-    annRef,
-    (snapshot) => {
-      if (!announcementsInitialized) {
-        if (snapshot.exists()) {
-          const all = snapshot.val() as Record<string, AnnouncementData>;
-          Object.keys(all).forEach((id) => seenAnnouncementIds.add(id));
-        }
-        announcementsInitialized = true;
-        const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
-        console.log(
-          `[PushService] Announcement listener initialized — ${count} existing`,
-        );
-        return;
+  const annRef = database.ref('announcements');
+  const callback = (snapshot: any) => {
+    if (!announcementsInitialized) {
+      if (snapshot.exists()) {
+        const all = snapshot.val() as Record<string, AnnouncementData>;
+        Object.keys(all).forEach((id) => seenAnnouncementIds.add(id));
+      }
+      announcementsInitialized = true;
+      const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
+      console.log(`[PushService] Announcement listener initialized — ${count} existing`);
+      return;
+    }
+
+    if (!snapshot.exists()) return;
+
+    const all = snapshot.val() as Record<string, AnnouncementData>;
+    const now = Date.now();
+
+    for (const [id, ann] of Object.entries(all)) {
+      if (seenAnnouncementIds.has(id)) continue;
+      seenAnnouncementIds.add(id);
+      trimSet(seenAnnouncementIds);
+
+      if (ann.expiresAt) {
+        const ts = new Date(ann.expiresAt).getTime();
+        if (!isNaN(ts) && ts <= now) continue;
       }
 
-      if (!snapshot.exists()) return;
+      handleNewAnnouncement(ann).catch((e) =>
+        console.warn('[PushService] Announcement handler error:', e),
+      );
+    }
+  };
 
-      const all = snapshot.val() as Record<string, AnnouncementData>;
-      const now = Date.now();
+  const errorCallback = (error: any) => {
+    console.warn('[PushService] Announcements listener error:', error);
+  };
 
-      for (const [id, ann] of Object.entries(all)) {
-        if (seenAnnouncementIds.has(id)) continue;
-        seenAnnouncementIds.add(id);
-        trimSet(seenAnnouncementIds);
-
-        // Skip expired announcements.
-        if (ann.expiresAt) {
-          const ts = new Date(ann.expiresAt).getTime();
-          if (!isNaN(ts) && ts <= now) continue;
-        }
-
-        handleNewAnnouncement(ann).catch((e) =>
-          console.warn('[PushService] Announcement handler error:', e),
-        );
-      }
-    },
-    (error) => {
-      console.warn('[PushService] Announcements listener error:', error);
-    },
-  );
+  annRef.on('value', callback, errorCallback);
 }
 
 // ---------------------------------------------------------------------------
@@ -445,12 +479,7 @@ async function handleNewEvent(ev: EventData): Promise<void> {
   const title = `${groupName} · New Event`;
   const body = ev.title;
 
-  // We don't have the creator's userId in the event data directly,
-  // so we can't exclude anyone. The creator will get a push too,
-  // but the client-side setNotificationHandler can suppress it if
-  // they're the one who created it (they'll be on that screen).
   const tokens = await getGroupMemberTokens(ev.groupId);
-
   if (tokens.length === 0) return;
 
   await sendPushNotifications(tokens, title, body, {
@@ -463,41 +492,39 @@ async function handleNewEvent(ev: EventData): Promise<void> {
 function startEventListener(): void {
   if (!database) return;
 
-  const eventsRef = ref(database, 'events');
-  onValue(
-    eventsRef,
-    (snapshot) => {
-      if (!eventsInitialized) {
-        if (snapshot.exists()) {
-          const all = snapshot.val() as Record<string, EventData>;
-          Object.keys(all).forEach((id) => seenEventIds.add(id));
-        }
-        eventsInitialized = true;
-        const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
-        console.log(
-          `[PushService] Event listener initialized — ${count} existing`,
-        );
-        return;
+  const eventsRef = database.ref('events');
+  const callback = (snapshot: any) => {
+    if (!eventsInitialized) {
+      if (snapshot.exists()) {
+        const all = snapshot.val() as Record<string, EventData>;
+        Object.keys(all).forEach((id) => seenEventIds.add(id));
       }
+      eventsInitialized = true;
+      const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
+      console.log(`[PushService] Event listener initialized — ${count} existing`);
+      return;
+    }
 
-      if (!snapshot.exists()) return;
+    if (!snapshot.exists()) return;
 
-      const all = snapshot.val() as Record<string, EventData>;
+    const all = snapshot.val() as Record<string, EventData>;
 
-      for (const [id, ev] of Object.entries(all)) {
-        if (seenEventIds.has(id)) continue;
-        seenEventIds.add(id);
-        trimSet(seenEventIds);
+    for (const [id, ev] of Object.entries(all)) {
+      if (seenEventIds.has(id)) continue;
+      seenEventIds.add(id);
+      trimSet(seenEventIds);
 
-        handleNewEvent(ev).catch((e) =>
-          console.warn('[PushService] Event handler error:', e),
-        );
-      }
-    },
-    (error) => {
-      console.warn('[PushService] Events listener error:', error);
-    },
-  );
+      handleNewEvent(ev).catch((e) =>
+        console.warn('[PushService] Event handler error:', e),
+      );
+    }
+  };
+
+  const errorCallback = (error: any) => {
+    console.warn('[PushService] Events listener error:', error);
+  };
+
+  eventsRef.on('value', callback, errorCallback);
 }
 
 // ---------------------------------------------------------------------------
@@ -507,69 +534,42 @@ function startEventListener(): void {
 function startGroupListener(): void {
   if (!database) return;
 
-  const groupsRef = ref(database, 'groups');
-  onValue(
-    groupsRef,
-    (snapshot) => {
-      if (snapshot.exists()) {
-        const groups = snapshot.val() as Record<string, any>;
-        for (const [id, group] of Object.entries(groups)) {
-          if (group?.name) groupNameCache.set(id, group.name);
-        }
+  const groupsRef = database.ref('groups');
+  const callback = (snapshot: any) => {
+    if (snapshot.exists()) {
+      const groups = snapshot.val() as Record<string, any>;
+      for (const [id, group] of Object.entries(groups)) {
+        if (group?.name) groupNameCache.set(id, group.name);
       }
-      if (!groupsInitialized) {
-        groupsInitialized = true;
-        const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
-        console.log(
-          `[PushService] Group listener initialized — ${count} group(s)`,
-        );
-      }
-    },
-    (error) => {
-      console.warn('[PushService] Groups listener error:', error);
-    },
-  );
+    }
+    if (!groupsInitialized) {
+      groupsInitialized = true;
+      const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
+      console.log(`[PushService] Group listener initialized — ${count} group(s)`);
+    }
+  };
+
+  const errorCallback = (error: any) => {
+    console.warn('[PushService] Groups listener error:', error);
+  };
+
+  groupsRef.on('value', callback, errorCallback);
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/**
- * Start all Firebase listeners and begin sending push notifications for new
- * chat messages, announcements, and events. Call once when the backend starts.
- */
 export function startPushService(): void {
   if (!database || !isConfigured) {
-    console.warn(
-      '[PushService] Firebase not configured — push service disabled',
-    );
+    console.warn('[PushService] Firebase not configured — push service disabled');
     return;
   }
 
-  console.log('[PushService] Starting backend push notification service...');
-
-  // Wait for anonymous auth to complete before starting listeners.
-  // Without auth, Firebase security rules reject every read with
-  // PERMISSION_DENIED and no pushes are ever sent.
-  const startListeners = () => {
-    // Start the group name cache first so announcement/event handlers have names.
-    startGroupListener();
-    startChatListener();
-    startAnnouncementListener();
-    startEventListener();
-    console.log('[PushService] All listeners started — monitoring for new content');
-  };
-
-  if (authReadyPromise) {
-    console.log('[PushService] Waiting for backend auth before starting listeners...');
-    authReadyPromise.then(() => {
-      startListeners();
-    }).catch((err) => {
-      console.warn('[PushService] Auth wait failed, starting listeners anyway:', err);
-      startListeners();
-    });
-  } else {
-    startListeners();
-  }
+  console.log('[PushService] Starting backend push notification service (Admin SDK)...');
+  startGroupListener();
+  startChatListener();
+  startAnnouncementListener();
+  startEventListener();
+  console.log('[PushService] All listeners started — monitoring for new content');
 }

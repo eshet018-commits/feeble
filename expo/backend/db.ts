@@ -1,13 +1,13 @@
-import { database, isConfigured } from "./firebase";
-import { Database } from "firebase/database";
-import { TRPCError } from "@trpc/server";
+import { database, isConfigured } from './firebase';
+import { TRPCError } from '@trpc/server';
 
-export function getDb(): Database {
+/**
+ * Returns the Admin SDK database instance. The admin database uses
+ * `db.ref('path')` style API (methods on the database/reference objects)
+ * rather than standalone `ref()` / `set()` functions.
+ */
+export function getDb(): any {
   if (!database || !isConfigured) {
-    console.error('Database not configured. Firebase setup status:', { 
-      hasDatabase: !!database, 
-      isConfigured 
-    });
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Database is not configured. Please check your Firebase environment variables.',

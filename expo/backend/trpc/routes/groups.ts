@@ -1,12 +1,19 @@
 import * as z from "zod";
-import { ref, set, get, update, remove, query, orderByChild, equalTo } from "firebase/database";
 import { getDb } from "@/backend/db";
 import { createTRPCRouter, publicProcedure } from "../create-context";
 import { Group, Member, Event } from "@/types/event";
 import { TRPCError } from "@trpc/server";
 
-async function generateInviteCode(): Promise<string> {
-  const db = getDb();
+/**
+ * tRPC routes for group management.
+ *
+ * Uses the Firebase Admin SDK database (via getDb()). The admin database uses
+ * `db.ref('path')` with methods like `.set()`, `.get()`, `.update()`,
+ * `.remove()`, `.on()` — NOT the standalone `ref()` / `set()` / `get()`
+ * functions from the client SDK.
+ */
+
+async function generateInviteCode(db: any): Promise<string> {
   let code: string;
   let isUnique = false;
   let attempts = 0;
@@ -14,12 +21,16 @@ async function generateInviteCode(): Promise<string> {
 
   while (!isUnique && attempts < maxAttempts) {
     code = Math.random().toString(36).substring(2, 10).toUpperCase();
-    const groupsRef = ref(db, 'groups');
-    const q = query(groupsRef, orderByChild('inviteCode'), equalTo(code));
-    const snapshot = await get(q);
-    
-    if (!snapshot.exists()) {
-      isUnique = true;
+    const groupsSnap = await db.ref('groups').get();
+
+    if (!groupsSnap.exists()) {
+      return code;
+    }
+
+    const groups = groupsSnap.val();
+    const existingCodes = Object.values(groups).map((g: any) => g.inviteCode);
+
+    if (!existingCodes.includes(code)) {
       return code;
     }
     attempts++;
@@ -28,20 +39,24 @@ async function generateInviteCode(): Promise<string> {
   throw new Error('Failed to generate unique invite code');
 }
 
-async function isInviteCodeAvailable(code: string, excludeGroupId?: string): Promise<boolean> {
-  const db = getDb();
-  const groupsRef = ref(db, 'groups');
-  const q = query(groupsRef, orderByChild('inviteCode'), equalTo(code));
-  const snapshot = await get(q);
-  
-  if (!snapshot.exists()) {
+async function isInviteCodeAvailable(db: any, code: string, excludeGroupId?: string): Promise<boolean> {
+  const groupsSnap = await db.ref('groups').get();
+
+  if (!groupsSnap.exists()) {
+    return true;
+  }
+
+  const groups = groupsSnap.val();
+  const matchingGroups = Object.entries(groups).filter(
+    ([_id, data]: [string, any]) => data.inviteCode === code
+  );
+
+  if (matchingGroups.length === 0) {
     return true;
   }
 
   if (excludeGroupId) {
-    const groups = snapshot.val();
-    const matchingGroupIds = Object.keys(groups);
-    return matchingGroupIds.length === 1 && matchingGroupIds[0] === excludeGroupId;
+    return matchingGroups.length === 1 && matchingGroups[0][0] === excludeGroupId;
   }
 
   return false;
@@ -59,10 +74,10 @@ export const groupsRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      
-      const inviteCode = await generateInviteCode();
+
+      const inviteCode = await generateInviteCode(db);
       const now = new Date().toISOString();
-      
+
       const group: Group = {
         id: `group_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         name: input.name,
@@ -75,7 +90,7 @@ export const groupsRouter = createTRPCRouter({
         updatedAt: now,
       };
 
-      await set(ref(db, `groups/${group.id}`), group);
+      await db.ref(`groups/${group.id}`).set(group);
 
       const member: Member = {
         id: `member_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -86,7 +101,7 @@ export const groupsRouter = createTRPCRouter({
         joinedAt: now,
       };
 
-      await set(ref(db, `members/${member.id}`), member);
+      await db.ref(`members/${member.id}`).set(member);
 
       console.log('Group created in Firebase:', group);
       return group;
@@ -96,7 +111,7 @@ export const groupsRouter = createTRPCRouter({
     .input(z.object({ id: z.string() }))
     .query(async ({ input }) => {
       const db = getDb();
-      const snapshot = await get(ref(db, `groups/${input.id}`));
+      const snapshot = await db.ref(`groups/${input.id}`).get();
       return snapshot.exists() ? (snapshot.val() as Group) : null;
     }),
 
@@ -104,16 +119,18 @@ export const groupsRouter = createTRPCRouter({
     .input(z.object({ inviteCode: z.string() }))
     .query(async ({ input }) => {
       const db = getDb();
-      const groupsRef = ref(db, 'groups');
-      const q = query(groupsRef, orderByChild('inviteCode'), equalTo(input.inviteCode));
-      const snapshot = await get(q);
-      
-      if (snapshot.exists()) {
-        const groups = snapshot.val();
-        const groupId = Object.keys(groups)[0];
-        return groups[groupId] as Group;
+      const groupsSnap = await db.ref('groups').get();
+
+      if (groupsSnap.exists()) {
+        const groups = groupsSnap.val();
+        const found = Object.entries(groups).find(
+          ([_id, data]: [string, any]) => data.inviteCode === input.inviteCode
+        );
+        if (found) {
+          return found[1] as Group;
+        }
       }
-      
+
       return null;
     }),
 
@@ -121,31 +138,30 @@ export const groupsRouter = createTRPCRouter({
     .input(z.object({ userId: z.string() }))
     .query(async ({ input }) => {
       const db = getDb();
-      
-      const membersRef = ref(db, 'members');
-      const q = query(membersRef, orderByChild('userId'), equalTo(input.userId));
-      const snapshot = await get(q);
-      
-      if (!snapshot.exists()) {
+
+      const membersSnap = await db.ref('members').get();
+
+      if (!membersSnap.exists()) {
         return [];
       }
 
-      const members = snapshot.val();
+      const members = membersSnap.val();
       const memberArray: Member[] = Object.values(members);
-      
-      if (memberArray.length === 0) {
+      const userMembers = memberArray.filter((m) => m.userId === input.userId);
+
+      if (userMembers.length === 0) {
         return [];
       }
 
       const groups: Group[] = [];
-      
-      for (const member of memberArray) {
-        const groupSnapshot = await get(ref(db, `groups/${member.groupId}`));
+
+      for (const member of userMembers) {
+        const groupSnapshot = await db.ref(`groups/${member.groupId}`).get();
         if (groupSnapshot.exists()) {
           groups.push(groupSnapshot.val() as Group);
         }
       }
-      
+
       console.log('User groups fetched:', groups);
       return groups;
     }),
@@ -161,7 +177,7 @@ export const groupsRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      
+
       if (input.inviteCode) {
         const isAvailable = await isInviteCodeAvailable(input.inviteCode, input.id);
         if (!isAvailable) {
@@ -175,14 +191,14 @@ export const groupsRouter = createTRPCRouter({
       const updates: Partial<Group> = {
         updatedAt: new Date().toISOString(),
       };
-      
+
       if (input.name) updates.name = input.name;
       if (input.description !== undefined) updates.description = input.description;
       if (input.inviteCode) updates.inviteCode = input.inviteCode;
 
-      await update(ref(db, `groups/${input.id}`), updates);
-      
-      const snapshot = await get(ref(db, `groups/${input.id}`));
+      await db.ref(`groups/${input.id}`).update(updates);
+
+      const snapshot = await db.ref(`groups/${input.id}`).get();
       console.log('Group updated:', snapshot.val());
       return snapshot.val() as Group;
     }),
@@ -191,31 +207,31 @@ export const groupsRouter = createTRPCRouter({
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input }) => {
       const db = getDb();
-      
-      const membersRef = ref(db, 'members');
-      const q = query(membersRef, orderByChild('groupId'), equalTo(input.id));
-      const membersSnapshot = await get(q);
-      
-      if (membersSnapshot.exists()) {
-        const members = membersSnapshot.val();
-        for (const memberId of Object.keys(members)) {
-          await remove(ref(db, `members/${memberId}`));
+
+      const membersSnap = await db.ref('members').get();
+
+      if (membersSnap.exists()) {
+        const members = membersSnap.val();
+        for (const [memberId, memberData] of Object.entries(members)) {
+          if ((memberData as any).groupId === input.id) {
+            await db.ref(`members/${memberId}`).remove();
+          }
         }
       }
-      
-      const eventsRef = ref(db, 'events');
-      const eventsQuery = query(eventsRef, orderByChild('groupId'), equalTo(input.id));
-      const eventsSnapshot = await get(eventsQuery);
-      
-      if (eventsSnapshot.exists()) {
-        const events = eventsSnapshot.val();
-        for (const eventId of Object.keys(events)) {
-          await remove(ref(db, `events/${eventId}`));
+
+      const eventsSnap = await db.ref('events').get();
+
+      if (eventsSnap.exists()) {
+        const events = eventsSnap.val();
+        for (const [eventId, eventData] of Object.entries(events)) {
+          if ((eventData as any).groupId === input.id) {
+            await db.ref(`events/${eventId}`).remove();
+          }
         }
       }
-      
-      await remove(ref(db, `groups/${input.id}`));
-      
+
+      await db.ref(`groups/${input.id}`).remove();
+
       console.log('Group deleted:', input.id);
       return { success: true };
     }),
@@ -230,34 +246,38 @@ export const groupsRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      
-      console.log('Searching for group with code:', input.inviteCode);
-      
-      const groupsRef = ref(db, 'groups');
-      const q = query(groupsRef, orderByChild('inviteCode'), equalTo(input.inviteCode));
-      const snapshot = await get(q);
 
-      if (!snapshot.exists()) {
+      console.log('Searching for group with code:', input.inviteCode);
+
+      const groupsSnap = await db.ref('groups').get();
+
+      if (!groupsSnap.exists()) {
+        console.log('No groups found');
+        return { success: false, error: "Group not found" };
+      }
+
+      const groups = groupsSnap.val();
+      const found = Object.entries(groups).find(
+        ([_id, data]: [string, any]) => data.inviteCode === input.inviteCode
+      );
+
+      if (!found) {
         console.log('No group found with code:', input.inviteCode);
         return { success: false, error: "Group not found" };
       }
 
-      const groups = snapshot.val();
-      const groupId = Object.keys(groups)[0];
-      const group = groups[groupId] as Group;
-      
+      const group = found[1] as Group;
+
       console.log('Found group:', group);
 
-      const membersRef = ref(db, 'members');
-      const membersQuery = query(membersRef, orderByChild('userId'), equalTo(input.userId));
-      const membersSnapshot = await get(membersQuery);
+      const membersSnap = await db.ref('members').get();
 
-      if (membersSnapshot.exists()) {
-        const members = membersSnapshot.val();
+      if (membersSnap.exists()) {
+        const members = membersSnap.val();
         const existingMember = Object.values(members).find(
-          (m: any) => m.groupId === group.id
+          (m: any) => m.groupId === group.id && m.userId === input.userId
         );
-        
+
         if (existingMember) {
           console.log('User already member of group');
           return { success: false, error: "You are already a member of this group" };
@@ -273,7 +293,7 @@ export const groupsRouter = createTRPCRouter({
         joinedAt: new Date().toISOString(),
       };
 
-      await set(ref(db, `members/${member.id}`), member);
+      await db.ref(`members/${member.id}`).set(member);
 
       console.log('User joined group:', { groupId: group.id, groupName: group.name });
       return {
@@ -287,16 +307,16 @@ export const groupsRouter = createTRPCRouter({
     .input(z.object({ groupId: z.string() }))
     .query(async ({ input }) => {
       const db = getDb();
-      const membersRef = ref(db, 'members');
-      const q = query(membersRef, orderByChild('groupId'), equalTo(input.groupId));
-      const snapshot = await get(q);
-      
-      if (!snapshot.exists()) {
+      const membersSnap = await db.ref('members').get();
+
+      if (!membersSnap.exists()) {
         return [];
       }
-      
-      const members = snapshot.val();
-      return Object.values(members) as Member[];
+
+      const members = membersSnap.val();
+      return Object.values(members).filter(
+        (m: any) => m.groupId === input.groupId
+      ) as Member[];
     }),
 
   createEvent: publicProcedure
@@ -336,9 +356,9 @@ export const groupsRouter = createTRPCRouter({
       try {
         const now = new Date().toISOString();
         const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
+
         console.log('Creating event with ID:', eventId);
-        
+
         const eventData: any = {
           id: eventId,
           groupId: input.groupId,
@@ -357,15 +377,15 @@ export const groupsRouter = createTRPCRouter({
         if (input.description) {
           eventData.description = input.description;
         }
-        
+
         if (input.repeatEndDate) {
           eventData.repeatEndDate = input.repeatEndDate;
         }
 
         console.log('Writing to Firebase...');
-        await set(ref(db, `events/${eventId}`), eventData);
+        await db.ref(`events/${eventId}`).set(eventData);
         console.log('Event created in Firebase:', eventId);
-        
+
         return {
           id: eventId,
           success: true,
@@ -384,46 +404,44 @@ export const groupsRouter = createTRPCRouter({
     .input(z.object({ groupId: z.string() }))
     .query(async ({ input }) => {
       const db = getDb();
-      const eventsRef = ref(db, 'events');
-      const q = query(eventsRef, orderByChild('groupId'), equalTo(input.groupId));
-      const snapshot = await get(q);
-      
-      if (!snapshot.exists()) {
+      const eventsSnap = await db.ref('events').get();
+
+      if (!eventsSnap.exists()) {
         return [];
       }
-      
-      const events = snapshot.val();
-      return Object.values(events) as Event[];
+
+      const events = eventsSnap.val();
+      return Object.values(events).filter(
+        (e: any) => e.groupId === input.groupId
+      ) as Event[];
     }),
 
   getAllUserEvents: publicProcedure
     .input(z.object({ userId: z.string() }))
     .query(async ({ input }) => {
       const db = getDb();
-      
-      const membersRef = ref(db, 'members');
-      const membersQuery = query(membersRef, orderByChild('userId'), equalTo(input.userId));
-      const membersSnapshot = await get(membersQuery);
-      
-      if (!membersSnapshot.exists()) {
+
+      const membersSnap = await db.ref('members').get();
+
+      if (!membersSnap.exists()) {
         return [];
       }
 
-      const members = membersSnapshot.val();
+      const members = membersSnap.val();
       const memberArray: Member[] = Object.values(members);
-      const groupIds = memberArray.map(m => m.groupId);
-      
-      const eventsRef = ref(db, 'events');
-      const eventsSnapshot = await get(eventsRef);
-      
-      if (!eventsSnapshot.exists()) {
+      const userMembers = memberArray.filter((m) => m.userId === input.userId);
+      const groupIds = userMembers.map((m) => m.groupId);
+
+      const eventsSnap = await db.ref('events').get();
+
+      if (!eventsSnap.exists()) {
         return [];
       }
 
-      const allEvents = eventsSnapshot.val();
+      const allEvents = eventsSnap.val();
       const events: Event[] = Object.values(allEvents);
-      
-      return events.filter(event => groupIds.includes(event.groupId || ''));
+
+      return events.filter((event) => groupIds.includes(event.groupId || ''));
     }),
 
   updateEvent: publicProcedure
@@ -442,11 +460,11 @@ export const groupsRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      
+
       const updates: Partial<Event> = {
         updatedAt: new Date().toISOString(),
       };
-      
+
       if (input.title) updates.title = input.title;
       if (input.description !== undefined) updates.description = input.description;
       if (input.startDate) updates.startDate = input.startDate;
@@ -456,9 +474,9 @@ export const groupsRouter = createTRPCRouter({
       if (input.repeatFrequency) updates.repeatFrequency = input.repeatFrequency;
       if (input.repeatEndDate !== undefined) updates.repeatEndDate = input.repeatEndDate;
 
-      await update(ref(db, `events/${input.id}`), updates);
-      
-      const snapshot = await get(ref(db, `events/${input.id}`));
+      await db.ref(`events/${input.id}`).update(updates);
+
+      const snapshot = await db.ref(`events/${input.id}`).get();
       return snapshot.val() as Event;
     }),
 
@@ -466,7 +484,7 @@ export const groupsRouter = createTRPCRouter({
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input }) => {
       const db = getDb();
-      await remove(ref(db, `events/${input.id}`));
+      await db.ref(`events/${input.id}`).remove();
       console.log('Event deleted:', input.id);
       return { success: true };
     }),
@@ -480,15 +498,15 @@ export const groupsRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      
-      const groupSnapshot = await get(ref(db, `groups/${input.groupId}`));
+
+      const groupSnapshot = await db.ref(`groups/${input.groupId}`).get();
       if (!groupSnapshot.exists()) {
         throw new TRPCError({
           code: 'NOT_FOUND',
           message: 'Group not found',
         });
       }
-      
+
       const group = groupSnapshot.val() as Group;
       if (group.adminId === input.userId) {
         throw new TRPCError({
@@ -496,25 +514,24 @@ export const groupsRouter = createTRPCRouter({
           message: 'Group admins cannot leave their own group. Please delete the group or transfer ownership first.',
         });
       }
-      
-      const membersRef = ref(db, 'members');
-      const q = query(membersRef, orderByChild('userId'), equalTo(input.userId));
-      const membersSnapshot = await get(q);
-      
-      if (membersSnapshot.exists()) {
-        const members = membersSnapshot.val();
+
+      const membersSnap = await db.ref('members').get();
+
+      if (membersSnap.exists()) {
+        const members = membersSnap.val();
         const memberEntry = Object.entries(members).find(
-          ([_, memberData]: [string, any]) => memberData.groupId === input.groupId
+          ([_id, memberData]: [string, any]) =>
+            memberData.groupId === input.groupId && memberData.userId === input.userId
         );
-        
+
         if (memberEntry) {
           const [memberId] = memberEntry;
-          await remove(ref(db, `members/${memberId}`));
+          await db.ref(`members/${memberId}`).remove();
           console.log('User left group:', { userId: input.userId, groupId: input.groupId });
           return { success: true };
         }
       }
-      
+
       throw new TRPCError({
         code: 'NOT_FOUND',
         message: 'Member not found in group',
@@ -531,46 +548,44 @@ export const groupsRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      
-      const groupSnapshot = await get(ref(db, `groups/${input.groupId}`));
+
+      const groupSnapshot = await db.ref(`groups/${input.groupId}`).get();
       if (!groupSnapshot.exists()) {
         throw new TRPCError({
           code: 'NOT_FOUND',
           message: 'Group not found',
         });
       }
-      
-      const membersRef = ref(db, 'members');
-      const requestingMemberQuery = query(membersRef, orderByChild('userId'), equalTo(input.requestingUserId));
-      const requestingMemberSnapshot = await get(requestingMemberQuery);
-      
+
+      const membersSnap = await db.ref('members').get();
+
       let isRequestingUserAdmin = false;
-      if (requestingMemberSnapshot.exists()) {
-        const members = requestingMemberSnapshot.val();
+      if (membersSnap.exists()) {
+        const members = membersSnap.val();
         const requestingMember = Object.values(members).find(
-          (m: any) => m.groupId === input.groupId
+          (m: any) => m.groupId === input.groupId && m.userId === input.requestingUserId
         ) as Member | undefined;
-        
+
         if (requestingMember) {
           isRequestingUserAdmin = requestingMember.role === 'admin';
         }
       }
-      
+
       if (!isRequestingUserAdmin) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'Only admins can promote members',
         });
       }
-      
-      const memberSnapshot = await get(ref(db, `members/${input.memberId}`));
+
+      const memberSnapshot = await db.ref(`members/${input.memberId}`).get();
       if (!memberSnapshot.exists()) {
         throw new TRPCError({
           code: 'NOT_FOUND',
           message: 'Member not found',
         });
       }
-      
+
       const member = memberSnapshot.val() as Member;
       if (member.groupId !== input.groupId) {
         throw new TRPCError({
@@ -578,15 +593,15 @@ export const groupsRouter = createTRPCRouter({
           message: 'Member does not belong to this group',
         });
       }
-      
+
       if (member.role === 'admin') {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'Member is already an admin',
         });
       }
-      
-      await update(ref(db, `members/${input.memberId}`), { role: 'admin' });
+
+      await db.ref(`members/${input.memberId}`).update({ role: 'admin' });
       console.log('Member promoted to admin:', { memberId: input.memberId, groupId: input.groupId });
       return { success: true };
     }),
@@ -601,32 +616,32 @@ export const groupsRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      
-      const groupSnapshot = await get(ref(db, `groups/${input.groupId}`));
+
+      const groupSnapshot = await db.ref(`groups/${input.groupId}`).get();
       if (!groupSnapshot.exists()) {
         throw new TRPCError({
           code: 'NOT_FOUND',
           message: 'Group not found',
         });
       }
-      
+
       const group = groupSnapshot.val() as Group;
-      
+
       if (group.creatorId !== input.requestingUserId) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'Only the group creator can demote admins',
         });
       }
-      
-      const memberSnapshot = await get(ref(db, `members/${input.memberId}`));
+
+      const memberSnapshot = await db.ref(`members/${input.memberId}`).get();
       if (!memberSnapshot.exists()) {
         throw new TRPCError({
           code: 'NOT_FOUND',
           message: 'Member not found',
         });
       }
-      
+
       const member = memberSnapshot.val() as Member;
       if (member.groupId !== input.groupId) {
         throw new TRPCError({
@@ -634,22 +649,22 @@ export const groupsRouter = createTRPCRouter({
           message: 'Member does not belong to this group',
         });
       }
-      
+
       if (member.userId === group.creatorId) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'Cannot demote the group creator',
         });
       }
-      
+
       if (member.role === 'viewer') {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'Member is already a viewer',
         });
       }
-      
-      await update(ref(db, `members/${input.memberId}`), { role: 'viewer' });
+
+      await db.ref(`members/${input.memberId}`).update({ role: 'viewer' });
       console.log('Member demoted to viewer:', { memberId: input.memberId, groupId: input.groupId });
       return { success: true };
     }),

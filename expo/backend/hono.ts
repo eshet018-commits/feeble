@@ -5,6 +5,7 @@ import { cors } from "hono/cors";
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
 import { startPushService } from "./push-service";
+import { messaging, isConfigured } from "./firebase";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -12,10 +13,17 @@ const app = new Hono();
 
 app.use("*", cors());
 
-// Simple REST push endpoint — more reliable than tRPC for a single fire-and-
-// forget proxy. The Expo Push API doesn't send CORS headers, so browsers
-// can't POST to it directly. This endpoint forwards the request server-side.
-app.post("/api/push", async (c) => {
+/**
+ * REST push endpoint — forwards push notifications to the appropriate service:
+ *   - FCM tokens (web) via Firebase Admin SDK messaging
+ *   - Expo push tokens (native) via the Expo Push API
+ *
+ * The Expo Push API and FCM API don't send CORS headers, so browsers can't
+ * POST to them directly. This endpoint forwards the request server-side.
+ *
+ * Note: The Hono app is mounted at /api, so this route is /api/push.
+ */
+app.post("/push", async (c) => {
   try {
     const body = await c.req.json();
     const messages = Array.isArray(body?.messages) ? body.messages : [];
@@ -23,32 +31,75 @@ app.post("/api/push", async (c) => {
       return c.json({ success: true, sent: 0 });
     }
 
-    // Batch in groups of 100 (Expo Push API limit per request).
+    const isExpoToken = (t: string) => t.startsWith("ExponentPushToken");
+    const expoMessages = messages.filter((m: any) => isExpoToken(m.to));
+    const fcmMessages = messages.filter((m: any) => !isExpoToken(m.to));
+
     let sent = 0;
-    for (let i = 0; i < messages.length; i += 100) {
-      const batch = messages.slice(i, i + 100);
-      const res = await fetch(EXPO_PUSH_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(batch),
-      });
-      const json = (await res.json()) as any;
-      if (json?.errors) {
-        console.warn("[PushEndpoint] Expo Push API errors:", json.errors);
+
+    // Send FCM pushes via Admin SDK.
+    if (fcmMessages.length > 0 && messaging) {
+      const tokens = fcmMessages.map((m: any) => m.to);
+      const batchChunks: string[][] = [];
+      for (let i = 0; i < tokens.length; i += 500) {
+        batchChunks.push(tokens.slice(i, i + 500));
       }
-      if (Array.isArray(json?.data)) {
-        for (const ticket of json.data) {
-          if (ticket?.status === "error") {
-            console.warn("[PushEndpoint] Ticket error:", ticket.message, ticket.details);
-          } else {
-            sent++;
+
+      for (const chunk of batchChunks) {
+        // Use the first message's title/body/data (all messages in a batch
+        // have the same content, just different recipients).
+        const msg = fcmMessages[0];
+        const data: Record<string, string> = {};
+        if (msg.data) {
+          for (const [k, v] of Object.entries(msg.data)) {
+            data[k] = typeof v === "string" ? v : JSON.stringify(v);
           }
+        }
+
+        try {
+          const response = await messaging.sendEachForMulticast({
+            tokens: chunk,
+            notification: { title: msg.title, body: msg.body },
+            data,
+            android: { priority: "high" },
+          });
+          for (const r of response.responses) {
+            if (r.success) sent++;
+          }
+        } catch (error) {
+          console.warn("[PushEndpoint] FCM send failed:", error);
         }
       }
     }
+
+    // Send Expo pushes via Expo Push API.
+    if (expoMessages.length > 0) {
+      for (let i = 0; i < expoMessages.length; i += 100) {
+        const batch = expoMessages.slice(i, i + 100);
+        try {
+          const res = await fetch(EXPO_PUSH_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify(batch),
+          });
+          const json = (await res.json()) as any;
+          if (json?.errors) {
+            console.warn("[PushEndpoint] Expo Push API errors:", json.errors);
+          }
+          if (Array.isArray(json?.data)) {
+            for (const ticket of json.data) {
+              if (ticket?.status !== "error") sent++;
+            }
+          }
+        } catch (error) {
+          console.warn("[PushEndpoint] Expo push failed:", error);
+        }
+      }
+    }
+
     return c.json({ success: true, sent });
   } catch (error) {
     console.warn("[PushEndpoint] Failed:", error);
@@ -56,19 +107,14 @@ app.post("/api/push", async (c) => {
   }
 });
 
+// tRPC routes — mounted at /api/trpc/* (Hono is mounted at /api).
 app.use(
-  "/api/trpc/*",
+  "/trpc/*",
   trpcServer({
     router: appRouter,
     createContext,
     onError({ error, path }) {
       console.error(`tRPC Error on ${path}:`, error);
-      console.error('Error details:', {
-        message: error.message,
-        code: error.code,
-        cause: error.cause,
-        stack: error.stack,
-      });
     },
     responseMeta() {
       return {
@@ -80,16 +126,12 @@ app.use(
   }),
 );
 
-// Start the backend push notification service — listens to Firebase for
-// new chat messages, announcements, and events, and sends real Expo push
-// notifications to group members' devices. This runs on the always-on backend
-// so notifications are delivered even when no client app is open.
-// The backend authenticates to Firebase using a custom token minted from the
-// service account key, bypassing all security rules.
+// Start the backend push notification service — uses Firebase Admin SDK
+// to listen for new content and send FCM/Expo push notifications.
 startPushService();
 
 app.get("/", (c) => {
-  return c.json({ status: "ok", message: "API is running" });
+  return c.json({ status: "ok", message: "API is running", pushService: isConfigured });
 });
 
 export default app;

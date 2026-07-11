@@ -3,6 +3,8 @@ import { Platform } from 'react-native';
 import { Event } from '@/types/event';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { firebaseClient } from '@/lib/firebase-client';
+// firebase/messaging is web-only — imported dynamically inside the web code
+// path to avoid breaking native bundles.
 
 /**
  * Per-chat notification settings (mirrors ChatSettings notification fields).
@@ -232,17 +234,19 @@ export function showWebNotification(
 }
 
 /**
- * Register for remote push notifications and return the Expo push token.
- * The token is saved to Firebase under `pushTokens/{userId}` so other devices
- * can look it up and send remote pushes that appear on the iPhone home screen
- * even when the app is closed. On web or when permissions are denied, returns
- * null. The token is also cached locally so we don't re-register every launch.
+ * Register for remote push notifications and return the push token.
+ *
+ * On native (iOS/Android): uses the Expo Push API to get an Expo push token.
+ * On web: uses Firebase Cloud Messaging (FCM) with the VAPID key to get an
+ *   FCM registration token. The FCM token enables real OS-level push
+ *   notifications that appear even when the browser tab is closed, via the
+ *   service worker at /public/firebase-messaging-sw.js.
+ *
+ * The token is saved to Firebase under `pushTokens/{userId}` so the backend
+ * push service can look it up and send remote pushes. On web or when
+ * permissions are denied, returns null. The token is also cached locally.
  */
 export async function registerForPushNotifications(userId?: string): Promise<string | null> {
-  if (Platform.OS === 'web') {
-    return null;
-  }
-
   const granted = await requestNotificationPermissions();
   if (!granted) {
     console.log('[Notifications] Permissions not granted');
@@ -253,7 +257,6 @@ export async function registerForPushNotifications(userId?: string): Promise<str
   try {
     const cached = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
     if (cached) {
-      // Still persist to Firebase in case the user reinstalled or cleared DB.
       if (userId) {
         firebaseClient.savePushToken(userId, cached).catch((e) =>
           console.warn('[Notifications] Failed to sync cached token:', e),
@@ -263,6 +266,62 @@ export async function registerForPushNotifications(userId?: string): Promise<str
     }
   } catch {}
 
+  // Web: use Firebase Cloud Messaging to get an FCM token.
+  if (Platform.OS === 'web') {
+    try {
+      // firebase/messaging is web-only — import dynamically so native
+      // bundles don't try to load it.
+      const { getMessaging, getToken, isSupported } =
+        await import('firebase/messaging');
+      const { app: firebaseApp } = await import('@/lib/firebase-client');
+
+      const supported = await isSupported();
+      if (!supported) {
+        console.log('[Notifications] FCM messaging not supported in this browser');
+        return null;
+      }
+
+      // Register the service worker for background push.
+      if ('serviceWorker' in navigator) {
+        try {
+          await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+          console.log('[Notifications] FCM service worker registered');
+        } catch (e) {
+          console.warn('[Notifications] Service worker registration failed:', e);
+        }
+      }
+
+      const messaging = getMessaging(firebaseApp);
+      const vapidKey = process.env.EXPO_PUBLIC_FIREBASE_VAPID_KEY;
+      if (!vapidKey) {
+        console.warn('[Notifications] No VAPID key configured');
+        return null;
+      }
+
+      const token = await getToken(messaging, {
+        vapidKey,
+        serviceWorkerRegistration: await navigator.serviceWorker.ready,
+      });
+
+      if (!token) {
+        console.warn('[Notifications] FCM returned empty token');
+        return null;
+      }
+
+      await AsyncStorage.setItem(PUSH_TOKEN_KEY, token);
+      console.log('[Notifications] FCM push token obtained:', token.slice(0, 20) + '...');
+      if (userId) {
+        await firebaseClient.savePushToken(userId, token);
+        console.log('[Notifications] FCM token saved to Firebase for user:', userId);
+      }
+      return token;
+    } catch (error) {
+      console.warn('[Notifications] Failed to get FCM token:', error);
+      return null;
+    }
+  }
+
+  // Native: use the Expo Push API to get an Expo push token.
   try {
     const ticket = await Notifications.getExpoPushTokenAsync({
       projectId: process.env.EXPO_PUBLIC_PROJECT_ID,
@@ -276,7 +335,7 @@ export async function registerForPushNotifications(userId?: string): Promise<str
     }
     return token;
   } catch (error) {
-    console.error('[Notifications] Failed to get Expo push token:', error);
+    console.warn('[Notifications] Failed to get Expo push token:', error);
     return null;
   }
 }
@@ -296,10 +355,17 @@ export async function unregisterPushToken(userId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Remote push via the Expo Push API — sends real notifications that appear on
-// the iPhone home screen even when the app is closed or backgrounded. Works on
-// native iOS/Android only (web has no APNs/FCM delivery). The caller looks up
-// recipient push tokens from Firebase, then this function fans out the POST.
+// Remote push — sends real notifications that appear on the device's home
+// screen / lock screen even when the app is closed or backgrounded.
+//
+// On native (iOS/Android): POST directly to the Expo Push API (no CORS on
+//   native) — delivers via APNs/FCM to the home screen.
+// On web: POST through the backend /api/push proxy (CORS blocks direct
+//   browser fetches to exp.host). The proxy forwards FCM tokens to
+//   Firebase Admin SDK messaging and Expo tokens to the Expo Push API.
+//
+// The caller looks up recipient push tokens from Firebase, then this
+// function fans out the POST.
 // ---------------------------------------------------------------------------
 
 interface RemotePushPayload {
