@@ -2,7 +2,7 @@ import createContextHook from '@nkzw/create-context-hook';
 import { useCallback, useState, useEffect } from 'react';
 import { Group, JoinGroupResult, Member } from '@/types/event';
 import { useUser } from './UserContext';
-import { database, isConfigured } from '@/backend/firebase';
+import { database, firebaseConfigured as isConfigured } from '@/lib/firebase-client';
 import {
   ref,
   set,

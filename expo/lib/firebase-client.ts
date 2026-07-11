@@ -145,9 +145,10 @@ try {
   storage = null;
 }
 
+const isConfigured = true;
 console.log('[Firebase] Client initialized successfully');
 
-export { auth, storage, setAuthPersistence, persistenceReady };
+export { auth, storage, setAuthPersistence, persistenceReady, database, isConfigured as firebaseConfigured };
 
 export const firebaseClient = {
   async createEvent(eventData: {
