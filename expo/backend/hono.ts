@@ -84,6 +84,8 @@ app.use(
 // new chat messages, announcements, and events, and sends real Expo push
 // notifications to group members' devices. This runs on the always-on backend
 // so notifications are delivered even when no client app is open.
+// The backend authenticates to Firebase using a custom token minted from the
+// service account key, bypassing all security rules.
 startPushService();
 
 app.get("/", (c) => {
