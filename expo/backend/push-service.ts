@@ -1,5 +1,5 @@
 import { ref, onValue, get, off } from 'firebase/database';
-import { database, isConfigured } from './firebase';
+import { database, isConfigured, authReadyPromise } from './firebase';
 
 /**
  * Backend push notification service.
@@ -549,11 +549,27 @@ export function startPushService(): void {
 
   console.log('[PushService] Starting backend push notification service...');
 
-  // Start the group name cache first so announcement/event handlers have names.
-  startGroupListener();
-  startChatListener();
-  startAnnouncementListener();
-  startEventListener();
+  // Wait for anonymous auth to complete before starting listeners.
+  // Without auth, Firebase security rules reject every read with
+  // PERMISSION_DENIED and no pushes are ever sent.
+  const startListeners = () => {
+    // Start the group name cache first so announcement/event handlers have names.
+    startGroupListener();
+    startChatListener();
+    startAnnouncementListener();
+    startEventListener();
+    console.log('[PushService] All listeners started — monitoring for new content');
+  };
 
-  console.log('[PushService] All listeners started — monitoring for new content');
+  if (authReadyPromise) {
+    console.log('[PushService] Waiting for backend auth before starting listeners...');
+    authReadyPromise.then(() => {
+      startListeners();
+    }).catch((err) => {
+      console.error('[PushService] Auth wait failed, starting listeners anyway:', err);
+      startListeners();
+    });
+  } else {
+    startListeners();
+  }
 }

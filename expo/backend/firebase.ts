@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getDatabase, Database } from 'firebase/database';
 import { getFirestore, Firestore } from 'firebase/firestore';
+import { getAuth, signInAnonymously, Auth, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: process.env.FIREBASE_API_KEY || process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -24,15 +25,38 @@ console.log('Backend Firebase config check:', {
 let app: FirebaseApp | null = null;
 let database: Database | null = null;
 let firestore: Firestore | null = null;
+let auth: Auth | null = null;
 let isConfigured = false;
+let authReadyPromise: Promise<void> | null = null;
 
 try {
   if (firebaseConfig.apiKey && firebaseConfig.databaseURL && firebaseConfig.projectId) {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
     database = getDatabase(app);
     firestore = getFirestore(app);
+    auth = getAuth(app);
     isConfigured = true;
     console.log('Backend Firebase initialized successfully');
+
+    // Sign in anonymously so the push service can read data protected by
+    // security rules that require `auth != null`. Without this, every
+    // listener gets PERMISSION_DENIED and no pushes are ever sent.
+    authReadyPromise = new Promise<void>((resolve) => {
+      if (!auth) { resolve(); return; }
+      const unsub = onAuthStateChanged(auth, (user) => {
+        if (user) {
+          console.log('[Backend Auth] Signed in anonymously:', user.uid);
+          unsub();
+          resolve();
+        }
+      });
+      signInAnonymously(auth).catch((err) => {
+        console.error('[Backend Auth] Anonymous sign-in failed:', err);
+        console.error('[Backend Auth] Enable Anonymous Auth in Firebase Console → Authentication → Sign-in method');
+        unsub();
+        resolve(); // Resolve anyway so the push service can attempt to start
+      });
+    });
   } else {
     console.error('Backend Firebase configuration is incomplete:', {
       hasApiKey: !!firebaseConfig.apiKey,
@@ -45,4 +69,4 @@ try {
   console.error('Failed to initialize Backend Firebase:', error);
 }
 
-export { database, firestore, isConfigured };
+export { database, firestore, isConfigured, auth, authReadyPromise };
