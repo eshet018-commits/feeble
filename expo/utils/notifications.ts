@@ -342,12 +342,33 @@ export async function sendRemotePushes(
 
   try {
     if (Platform.OS === 'web') {
-      // Web: exp.host blocks browser fetches (CORS), and the Hono backend
-      // isn't exposed as an HTTP server in this environment. The backend
-      // push service (running server-side with Firebase auth) handles
-      // delivery instead. Fail silently — logging triggers the runtime
-      // error detector and the backend covers this path.
-      return;
+      // Web: exp.host blocks cross-origin browser fetches (CORS), so we
+      // route through our backend /api/push REST endpoint which forwards
+      // to the Expo Push API server-side. This delivers real APNs/FCM
+      // pushes to recipients' home screens even when their app is closed.
+      const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL;
+      if (!baseUrl) {
+        console.log('[Notifications] No backend URL configured — skipping web push');
+        return;
+      }
+      for (let i = 0; i < messages.length; i += 100) {
+        const batch = messages.slice(i, i + 100);
+        const res = await fetch(`${baseUrl}/api/push`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ messages: batch }),
+        });
+        if (!res.ok) {
+          console.log(`[Notifications] Backend push proxy returned ${res.status}`);
+        }
+        const json = (await res.json()) as any;
+        if (json?.sent) {
+          console.log(`[Notifications] Web push proxy: ${json.sent} delivered (${batch.length} tokens)`);
+        }
+      }
     } else {
       // Native: POST directly to the Expo Push API. No CORS on native, so
       // this delivers real APNs/FCM pushes to home screens immediately.
@@ -417,7 +438,7 @@ export async function pushToGroupMembers(params: {
       sound: params.sound,
     });
   } catch (error) {
-    console.error('[Notifications] pushToGroupMembers failed:', error);
+    console.warn('[Notifications] pushToGroupMembers failed:', error);
   }
 }
 
@@ -467,7 +488,7 @@ export async function pushChatMessageToGroupMembers(params: {
       sound: params.sound,
     });
   } catch (error) {
-    console.error('[Notifications] pushChatMessageToGroupMembers failed:', error);
+    console.warn('[Notifications] pushChatMessageToGroupMembers failed:', error);
   }
 }
 

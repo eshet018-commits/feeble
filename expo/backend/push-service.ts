@@ -140,7 +140,7 @@ async function getGroupMemberTokens(
     );
     return tokens;
   } catch (error) {
-    console.error('[PushService] Failed to get member tokens:', error);
+    console.warn('[PushService] Failed to get member tokens:', error);
     return [];
   }
 }
@@ -190,7 +190,7 @@ async function getGroupMemberTokensForChat(
     );
     return tokens;
   } catch (error) {
-    console.error('[PushService] Failed to get member tokens:', error);
+    console.warn('[PushService] Failed to get member tokens:', error);
     return [];
   }
 }
@@ -231,7 +231,7 @@ async function sendPushNotifications(
       const json = (await res.json()) as any;
 
       if (json?.errors) {
-        console.error('[PushService] Expo Push API errors:', json.errors);
+        console.warn('[PushService] Expo Push API errors:', json.errors);
       }
       if (Array.isArray(json?.data)) {
         let ok = 0;
@@ -253,7 +253,7 @@ async function sendPushNotifications(
         );
       }
     } catch (error) {
-      console.error('[PushService] Failed to send push batch:', error);
+      console.warn('[PushService] Failed to send push batch:', error);
     }
   }
 }
@@ -289,12 +289,12 @@ function subscribeToChatMessages(chatId: string): void {
         trimSet(seenMessageIds);
 
         handleNewChatMessage(chatId, msg).catch((e) =>
-          console.error('[PushService] Chat message handler error:', e),
+          console.warn('[PushService] Chat message handler error:', e),
         );
       }
     },
     (error) => {
-      console.error(`[PushService] Messages listener error for ${chatId}:`, error);
+      console.warn(`[PushService] Messages listener error for ${chatId}:`, error);
     },
   );
 
@@ -365,7 +365,7 @@ function startChatListener(): void {
       }
     },
     (error) => {
-      console.error('[PushService] Chats listener error:', error);
+      console.warn('[PushService] Chats listener error:', error);
     },
   );
 }
@@ -426,12 +426,12 @@ function startAnnouncementListener(): void {
         }
 
         handleNewAnnouncement(ann).catch((e) =>
-          console.error('[PushService] Announcement handler error:', e),
+          console.warn('[PushService] Announcement handler error:', e),
         );
       }
     },
     (error) => {
-      console.error('[PushService] Announcements listener error:', error);
+      console.warn('[PushService] Announcements listener error:', error);
     },
   );
 }
@@ -490,12 +490,12 @@ function startEventListener(): void {
         trimSet(seenEventIds);
 
         handleNewEvent(ev).catch((e) =>
-          console.error('[PushService] Event handler error:', e),
+          console.warn('[PushService] Event handler error:', e),
         );
       }
     },
     (error) => {
-      console.error('[PushService] Events listener error:', error);
+      console.warn('[PushService] Events listener error:', error);
     },
   );
 }
@@ -526,7 +526,7 @@ function startGroupListener(): void {
       }
     },
     (error) => {
-      console.error('[PushService] Groups listener error:', error);
+      console.warn('[PushService] Groups listener error:', error);
     },
   );
 }
@@ -566,7 +566,7 @@ export function startPushService(): void {
     authReadyPromise.then(() => {
       startListeners();
     }).catch((err) => {
-      console.error('[PushService] Auth wait failed, starting listeners anyway:', err);
+      console.warn('[PushService] Auth wait failed, starting listeners anyway:', err);
       startListeners();
     });
   } else {
