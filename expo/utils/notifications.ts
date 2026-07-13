@@ -410,11 +410,13 @@ export async function sendRemotePushes(
     if (Platform.OS === 'web') {
       // Web: exp.host blocks cross-origin browser fetches (CORS), so we
       // route through our backend /api/push REST endpoint which forwards
-      // to the Expo Push API server-side. This delivers real APNs/FCM
-      // pushes to recipients' home screens even when their app is closed.
-      const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL;
+      // to FCM (for web tokens) or the Expo Push API (for native tokens).
+      // The backend runs on the same origin as the web app, so we use a
+      // relative URL. Fall back to EXPO_PUBLIC_RORK_API_BASE_URL if set.
+      const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL ||
+        (typeof window !== 'undefined' ? window.location.origin : '');
       if (!baseUrl) {
-        console.log('[Notifications] No backend URL configured — skipping web push');
+        console.log('[Notifications] No backend URL available — skipping web push');
         return;
       }
       for (let i = 0; i < messages.length; i += 100) {

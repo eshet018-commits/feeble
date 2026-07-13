@@ -2,6 +2,10 @@
 // This service worker receives push notifications from FCM when the web app
 // tab is closed or in the background. It displays them as system-level
 // notifications that appear on the user's screen even when the app is not open.
+//
+// The backend sends data-only messages (no `notification` field) so that
+// this service worker has full control over notification display —
+// avoiding duplicate notifications and allowing custom click handling.
 
 importScripts('https://www.gstatic.com/firebasejs/12.7.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/12.7.0/firebase-messaging-compat.js');
@@ -21,15 +25,18 @@ firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
 // Handle background messages — this fires when the web tab is closed or
-// in the background. The notification is shown automatically by FCM when
-// the payload includes a `notification` object.
+// in the background. The backend sends data-only messages, so we extract
+// title/body from payload.data and show the notification ourselves.
 messaging.onBackgroundMessage((payload) => {
-  const notificationTitle = payload.notification?.title || 'New Notification';
+  // Data-only messages: title/body are in payload.data
+  const data = payload.data || {};
+  const notificationTitle = data.title || payload.notification?.title || 'New Notification';
   const notificationOptions = {
-    body: payload.notification?.body || '',
+    body: data.body || payload.notification?.body || '',
     icon: '/icon.png',
-    data: payload.data || {},
-    tag: payload.data?.chatId || payload.data?.announcementId || payload.data?.eventId,
+    data: data,
+    tag: data.chatId || data.announcementId || data.eventId,
+    requireInteraction: false,
   };
 
   self.registration.showNotification(notificationTitle, notificationOptions);
