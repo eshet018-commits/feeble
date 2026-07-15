@@ -247,24 +247,31 @@ export function showWebNotification(
  * permissions are denied, returns null. The token is also cached locally.
  */
 export async function registerForPushNotifications(userId?: string): Promise<string | null> {
-  // Check if permission is already granted — do NOT request here.
-  // The NotificationPermissionPrompt component handles the user-gesture
-  // flow (browsers require a tap before granting notification permission).
   let alreadyGranted = false;
   if (Platform.OS === 'web') {
+    // Web: browsers require a user gesture before requesting permission,
+    // so the NotificationPermissionPrompt banner handles the request flow.
     if (typeof Notification === 'undefined') return null;
     alreadyGranted = Notification.permission === 'granted';
   } else {
+    // Native (iOS/Android): auto-request permission if not yet granted.
+    // On iOS this triggers the system notification permission dialog.
     try {
-      const { status } = await Notifications.getPermissionsAsync();
-      alreadyGranted = status === 'granted';
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      if (existingStatus !== 'granted') {
+        console.log('[Notifications] Requesting notification permission on native...');
+        const { status } = await Notifications.requestPermissionsAsync();
+        alreadyGranted = status === 'granted';
+      } else {
+        alreadyGranted = true;
+      }
     } catch {
       return null;
     }
   }
 
   if (!alreadyGranted) {
-    console.log('[Notifications] Permission not yet granted — skipping registration');
+    console.log('[Notifications] Permission not granted — skipping registration');
     return null;
   }
 

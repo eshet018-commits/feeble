@@ -44,12 +44,9 @@ export function NotificationPermissionPrompt() {
           alreadyGranted = Notification.permission === 'granted';
         }
       } else {
-        // On native, let the bootstrap handle it — this prompt is mainly
-        // for web where auto-request fails. But still show on native if
-        // permission isn't granted yet.
-        const Notifications = await import('expo-notifications');
-        const { status } = await Notifications.getPermissionsAsync();
-        alreadyGranted = status === 'granted';
+        // On native, NotificationBootstrap auto-requests permission on
+        // login, so this web-only banner is not needed.
+        return;
       }
 
       if (alreadyGranted) return;

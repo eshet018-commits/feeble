@@ -33,13 +33,11 @@ function NotificationBootstrap() {
   const { userId, isAuthenticated } = useUser();
 
   useEffect(() => {
-    // Register for push notifications when authenticated. The
-    // registerForPushNotifications function checks if permission is
-    // already granted — it does NOT request. On web, browsers require
-    // a user gesture to grant notification permission, so the
-    // NotificationPermissionPrompt component handles that flow.
-    // Here we only register if permission was granted in a previous
-    // session or via the prompt.
+    // Register for push notifications when authenticated. On native
+    // (iOS/Android), this auto-requests the system notification permission
+    // if not yet granted (triggers the iOS system dialog). On web, it only
+    // registers if already granted — the NotificationPermissionPrompt
+    // banner handles the browser user-gesture requirement.
     if (!isAuthenticated || !userId) return;
     registerForPushNotifications(userId).catch((e) =>
       console.warn("[Notifications] Registration failed:", e),
