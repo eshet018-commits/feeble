@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,19 +8,25 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
-
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useRouter } from 'expo-router';
 import { useUser } from '@/contexts/UserContext';
 import { auth } from '@/lib/firebase-client';
+import {
+  requestNotificationPermissions,
+  registerForPushNotifications,
+  getNotificationPermissionStatus,
+  type PermissionStatus,
+} from '@/utils/notifications';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider, updateEmail } from 'firebase/auth';
-import { LogOut, User, Mail, Save, Lock, Key, AtSign } from 'lucide-react-native';
+import { LogOut, User, Mail, Save, Lock, Key, AtSign, Bell, BellOff, ChevronRight } from 'lucide-react-native';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { userName, userEmail, updateUserName, displayName, updateDisplayName } = useUser();
+  const { userName, userEmail, userId, updateUserName, displayName, updateDisplayName } = useUser();
   const [newName, setNewName] = useState(userName);
   const [newUserId, setNewUserId] = useState(displayName || userName);
   const [isLoading, setIsLoading] = useState(false);
@@ -32,6 +38,8 @@ export default function ProfileScreen() {
   const [newEmail, setNewEmail] = useState('');
   const [confirmEmail, setConfirmEmail] = useState('');
   const [isChangingEmail, setIsChangingEmail] = useState(false);
+  const [notifStatus, setNotifStatus] = useState<PermissionStatus>('undetermined');
+  const [notifLoading, setNotifLoading] = useState(false);
 
   const handleSaveChanges = async () => {
     if (!newName.trim()) {
@@ -186,6 +194,35 @@ export default function ProfileScreen() {
 
 
 
+  const refreshNotifStatus = async () => {
+    const status = await getNotificationPermissionStatus();
+    setNotifStatus(status);
+  };
+
+  const handleToggleNotifications = async () => {
+    if (notifStatus === 'granted') return;
+    if (notifStatus === 'denied') {
+      Linking.openSettings();
+      return;
+    }
+    setNotifLoading(true);
+    try {
+      const granted = await requestNotificationPermissions();
+      if (granted && userId) {
+        await registerForPushNotifications(userId);
+      }
+    } catch (error) {
+      console.warn('[Profile] Notification toggle failed:', error);
+    } finally {
+      await refreshNotifStatus();
+      setNotifLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshNotifStatus();
+  }, []);
+
   const handleSignOut = async () => {
     Alert.alert(
       'Sign Out',
@@ -219,6 +256,49 @@ export default function ProfileScreen() {
             <User size={48} color="#007AFF" strokeWidth={2} />
           </View>
           <Text style={styles.title}>Profile</Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Notifications</Text>
+          <TouchableOpacity
+            style={styles.card}
+            onPress={handleToggleNotifications}
+            disabled={notifLoading}
+            activeOpacity={0.7}
+          >
+            <View style={styles.notifRow}>
+              <View style={[styles.iconWrap, notifStatus === 'granted' ? styles.iconWrapEnabled : styles.iconWrapDisabled]}>
+                {notifStatus === 'granted' ? (
+                  <Bell size={22} color="#34C759" />
+                ) : (
+                  <BellOff size={22} color="#FF3B30" />
+                )}
+              </View>
+              <View style={styles.notifText}>
+                <Text style={styles.label}>
+                  {notifStatus === 'granted'
+                    ? 'Notifications Enabled'
+                    : notifStatus === 'denied'
+                      ? 'Notifications Disabled'
+                      : 'Enable Notifications'}
+                </Text>
+                <Text style={styles.notifSubtext}>
+                  {notifStatus === 'granted'
+                    ? 'You will receive alerts for messages, announcements, and events.'
+                    : notifStatus === 'denied'
+                      ? 'Open iOS Settings to allow notifications for this app.'
+                      : 'Tap to allow alerts for messages, announcements, and events.'}
+                </Text>
+              </View>
+              {notifLoading ? (
+                <ActivityIndicator size="small" color="#007AFF" />
+              ) : notifStatus === 'granted' ? (
+                <Text style={styles.notifStatusText}>On</Text>
+              ) : (
+                <ChevronRight size={20} color="#C7C7CC" />
+              )}
+            </View>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
@@ -618,5 +698,37 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  notifRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  iconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconWrapEnabled: {
+    backgroundColor: '#E8FCEF',
+  },
+  iconWrapDisabled: {
+    backgroundColor: '#FEE8E8',
+  },
+  notifText: {
+    flex: 1,
+    gap: 2,
+  },
+  notifSubtext: {
+    fontSize: 13,
+    color: '#8E8E93',
+    lineHeight: 18,
+  },
+  notifStatusText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#34C759',
   },
 });

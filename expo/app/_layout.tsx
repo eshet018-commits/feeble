@@ -18,6 +18,7 @@ import {
   setupNotificationTapHandler,
   loadSeenNotifIds,
   getNotificationPermissionStatus,
+  requestNotificationPermissions,
 } from "@/utils/notifications";
 import { Platform } from "react-native";
 import { NotificationPermissionPrompt } from "@/components/NotificationPermissionPrompt";
@@ -35,29 +36,41 @@ function NotificationBootstrap() {
   const { userId, isAuthenticated } = useUser();
 
   useEffect(() => {
-    // Register for push notifications when authenticated. On native
-    // (iOS/Android), this auto-requests the system notification permission
-    // if not yet granted (triggers the iOS system dialog). On web, it only
-    // registers if already granted — the NotificationPermissionPrompt
-    // banner handles the browser user-gesture requirement.
+    // Register for push notifications when authenticated. On web, it only
+    // registers if already granted — the NotificationPermissionPrompt banner
+    // handles the browser user-gesture requirement.
     if (!isAuthenticated || !userId) return;
 
-    // On native, add a small delay so the iOS system dialog appears after
-    // the app UI is fully loaded (not competing with splash screen / login
-    // transition). On web, no delay needed.
-    const delay = Platform.OS === 'web' ? 0 : 800;
-
-    const timer = setTimeout(() => {
-      // Log current permission status for debugging.
-      getNotificationPermissionStatus().then((status) => {
-        console.log('[NotificationBootstrap] Current permission status:', status);
-      });
+    if (Platform.OS === 'web') {
       registerForPushNotifications(userId).catch((e) =>
         console.warn("[Notifications] Registration failed:", e),
       );
-    }, delay);
+      return;
+    }
 
-    return () => clearTimeout(timer);
+    // On native iOS/Android, ask for the system notification permission
+    // right after login. We do this explicitly rather than inside the
+    // token-registration helper so that any error is surfaced and the
+    // iOS system dialog is triggered as soon as the user is authenticated.
+    getNotificationPermissionStatus().then((status) => {
+      console.log('[NotificationBootstrap] Current permission status:', status);
+      if (status === 'granted') {
+        registerForPushNotifications(userId).catch((e) =>
+          console.warn("[Notifications] Token registration failed:", e),
+        );
+      } else if (status === 'undetermined') {
+        requestNotificationPermissions()
+          .then((granted) => {
+            console.log('[NotificationBootstrap] Permission request result:', granted);
+            if (granted) {
+              registerForPushNotifications(userId).catch((e) =>
+                console.warn("[Notifications] Token registration failed:", e),
+              );
+            }
+          })
+          .catch((e) => console.warn("[Notifications] Permission request failed:", e));
+      }
+    });
   }, [isAuthenticated, userId]);
 
   // Remove the stored push token on sign-out so the user stops receiving

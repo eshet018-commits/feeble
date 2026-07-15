@@ -14,6 +14,13 @@ const DISMISS_KEY = 'notif_permission_dismissed';
 const DISMISS_DENIED_KEY = 'notif_permission_denied_dismissed';
 
 /**
+ * On native iOS/Android we always want the user to see a clear path to enable
+ * notifications, because the OS dialog can only appear once and many users miss
+ * it. Web banners are more easily dismissed, so we still persist that choice.
+ */
+const IS_NATIVE = Platform.OS !== 'web';
+
+/**
  * A banner that prompts the user to enable notifications.
  *
  * On web: The tap on "Enable" counts as a user gesture, which browsers
@@ -48,16 +55,21 @@ export function NotificationPermissionPrompt() {
 
       if (status === 'granted') return;
 
-      // Check if the user previously dismissed the banner.
-      const dismissKey = status === 'denied' ? DISMISS_DENIED_KEY : DISMISS_KEY;
-      try {
-        const dismissed = await AsyncStorage.getItem(dismissKey);
-        if (dismissed === 'true') return;
-      } catch {}
+      // On native, keep the banner visible so users always have a way to enable
+      // notifications. On web, respect the user's dismissal to reduce annoyance.
+      if (!IS_NATIVE) {
+        const dismissKey = status === 'denied' ? DISMISS_DENIED_KEY : DISMISS_KEY;
+        try {
+          const dismissed = await AsyncStorage.getItem(dismissKey);
+          if (dismissed === 'true') return;
+        } catch {}
+      }
 
       if (!mounted) return;
 
-      // Small delay so it appears after the main UI loads.
+      // Show the banner after the main UI has settled. On native we use a shorter
+      // delay so the user notices the prompt right after login.
+      const delay = IS_NATIVE ? 600 : 1500;
       setTimeout(() => {
         if (!mounted) return;
         setVisible(true);
@@ -74,7 +86,7 @@ export function NotificationPermissionPrompt() {
             useNativeDriver: false,
           }),
         ]).start();
-      }, 1500);
+      }, delay);
     })();
 
     return () => {
@@ -114,7 +126,9 @@ export function NotificationPermissionPrompt() {
       }),
     ]).start(() => setVisible(false));
 
-    if (markDismissed) {
+    // Only persist dismissal on web. Native users need a persistent way to enable
+    // notifications because the OS dialog can only be shown once.
+    if (markDismissed && !IS_NATIVE) {
       const key = permStatus === 'denied' ? DISMISS_DENIED_KEY : DISMISS_KEY;
       AsyncStorage.setItem(key, 'true').catch(() => {});
     }
