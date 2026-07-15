@@ -247,9 +247,24 @@ export function showWebNotification(
  * permissions are denied, returns null. The token is also cached locally.
  */
 export async function registerForPushNotifications(userId?: string): Promise<string | null> {
-  const granted = await requestNotificationPermissions();
-  if (!granted) {
-    console.log('[Notifications] Permissions not granted');
+  // Check if permission is already granted — do NOT request here.
+  // The NotificationPermissionPrompt component handles the user-gesture
+  // flow (browsers require a tap before granting notification permission).
+  let alreadyGranted = false;
+  if (Platform.OS === 'web') {
+    if (typeof Notification === 'undefined') return null;
+    alreadyGranted = Notification.permission === 'granted';
+  } else {
+    try {
+      const { status } = await Notifications.getPermissionsAsync();
+      alreadyGranted = status === 'granted';
+    } catch {
+      return null;
+    }
+  }
+
+  if (!alreadyGranted) {
+    console.log('[Notifications] Permission not yet granted — skipping registration');
     return null;
   }
 
@@ -411,30 +426,45 @@ export async function sendRemotePushes(
       // Web: exp.host blocks cross-origin browser fetches (CORS), so we
       // route through our backend /api/push REST endpoint which forwards
       // to FCM (for web tokens) or the Expo Push API (for native tokens).
-      // The backend runs on the same origin as the web app, so we use a
-      // relative URL. Fall back to EXPO_PUBLIC_RORK_API_BASE_URL if set.
-      const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL ||
-        (typeof window !== 'undefined' ? window.location.origin : '');
-      if (!baseUrl) {
+      // Try multiple backend URLs — the backend may be deployed at either
+      // the RORK_API_BASE_URL or the RORK_FUNCTIONS_URL.
+      const candidateUrls = [
+        process.env.EXPO_PUBLIC_RORK_API_BASE_URL,
+        process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL,
+        typeof window !== 'undefined' ? window.location.origin : '',
+      ].filter(Boolean) as string[];
+
+      if (candidateUrls.length === 0) {
         console.log('[Notifications] No backend URL available — skipping web push');
         return;
       }
+
       for (let i = 0; i < messages.length; i += 100) {
         const batch = messages.slice(i, i + 100);
-        const res = await fetch(`${baseUrl}/api/push`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({ messages: batch }),
-        });
-        if (!res.ok) {
-          console.log(`[Notifications] Backend push proxy returned ${res.status}`);
+        let delivered = false;
+        for (const baseUrl of candidateUrls) {
+          try {
+            const res = await fetch(`${baseUrl}/api/push`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+              },
+              body: JSON.stringify({ messages: batch }),
+            });
+            if (!res.ok) continue; // try next URL
+            const json = (await res.json()) as any;
+            if (json?.sent) {
+              console.log(`[Notifications] Web push proxy: ${json.sent} delivered (${batch.length} tokens)`);
+            }
+            delivered = true;
+            break; // success — no need to try other URLs
+          } catch {
+            // try next URL
+          }
         }
-        const json = (await res.json()) as any;
-        if (json?.sent) {
-          console.log(`[Notifications] Web push proxy: ${json.sent} delivered (${batch.length} tokens)`);
+        if (!delivered) {
+          console.log('[Notifications] All backend push proxies failed — skipping batch');
         }
       }
     } else {

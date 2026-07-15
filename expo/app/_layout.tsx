@@ -17,8 +17,8 @@ import {
   unregisterPushToken,
   setupNotificationTapHandler,
   loadSeenNotifIds,
-  requestNotificationPermissions,
 } from "@/utils/notifications";
+import { NotificationPermissionPrompt } from "@/components/NotificationPermissionPrompt";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -33,13 +33,14 @@ function NotificationBootstrap() {
   const { userId, isAuthenticated } = useUser();
 
   useEffect(() => {
-    // Register (or re-register) for remote push whenever the auth state
-    // changes. The Expo push token is saved to Firebase keyed by userId so
-    // other devices can send real home-screen notifications to this user.
+    // Register for push notifications when authenticated. The
+    // registerForPushNotifications function checks if permission is
+    // already granted — it does NOT request. On web, browsers require
+    // a user gesture to grant notification permission, so the
+    // NotificationPermissionPrompt component handles that flow.
+    // Here we only register if permission was granted in a previous
+    // session or via the prompt.
     if (!isAuthenticated || !userId) return;
-    // On web, request browser notification permission so OS-level
-    // notifications appear even when the tab is in the background.
-    requestNotificationPermissions().catch(() => {});
     registerForPushNotifications(userId).catch((e) =>
       console.warn("[Notifications] Registration failed:", e),
     );
@@ -227,6 +228,7 @@ export default function RootLayout() {
                         <EventProvider>
                           <NotificationBootstrap />
                           <RootLayoutNav />
+                          <NotificationPermissionPrompt />
                         </EventProvider>
                       </AnnouncementProvider>
                     </ChatProvider>
