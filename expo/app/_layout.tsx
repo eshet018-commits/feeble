@@ -17,7 +17,9 @@ import {
   unregisterPushToken,
   setupNotificationTapHandler,
   loadSeenNotifIds,
+  getNotificationPermissionStatus,
 } from "@/utils/notifications";
+import { Platform } from "react-native";
 import { NotificationPermissionPrompt } from "@/components/NotificationPermissionPrompt";
 
 SplashScreen.preventAutoHideAsync();
@@ -39,9 +41,23 @@ function NotificationBootstrap() {
     // registers if already granted — the NotificationPermissionPrompt
     // banner handles the browser user-gesture requirement.
     if (!isAuthenticated || !userId) return;
-    registerForPushNotifications(userId).catch((e) =>
-      console.warn("[Notifications] Registration failed:", e),
-    );
+
+    // On native, add a small delay so the iOS system dialog appears after
+    // the app UI is fully loaded (not competing with splash screen / login
+    // transition). On web, no delay needed.
+    const delay = Platform.OS === 'web' ? 0 : 800;
+
+    const timer = setTimeout(() => {
+      // Log current permission status for debugging.
+      getNotificationPermissionStatus().then((status) => {
+        console.log('[NotificationBootstrap] Current permission status:', status);
+      });
+      registerForPushNotifications(userId).catch((e) =>
+        console.warn("[Notifications] Registration failed:", e),
+      );
+    }, delay);
+
+    return () => clearTimeout(timer);
   }, [isAuthenticated, userId]);
 
   // Remove the stored push token on sign-out so the user stops receiving

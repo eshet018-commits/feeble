@@ -1,55 +1,60 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, Animated } from 'react-native';
-import { Platform } from 'react-native';
-import { Bell, X } from 'lucide-react-native';
+import { Pressable, StyleSheet, Text, View, Animated, Linking, Platform } from 'react-native';
+import { Bell, X, Settings } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { requestNotificationPermissions, registerForPushNotifications } from '@/utils/notifications';
+import {
+  requestNotificationPermissions,
+  registerForPushNotifications,
+  getNotificationPermissionStatus,
+  type PermissionStatus,
+} from '@/utils/notifications';
 import { useUser } from '@/contexts/UserContext';
 
 const DISMISS_KEY = 'notif_permission_dismissed';
+const DISMISS_DENIED_KEY = 'notif_permission_denied_dismissed';
 
 /**
- * A banner that prompts the user to enable notifications. The tap on
- * "Enable" counts as a user gesture, which browsers require before
- * Notification.requestPermission() can succeed.
+ * A banner that prompts the user to enable notifications.
  *
- * Shows on web (where the browser gesture requirement blocks auto-request)
- * and on native (where it's a friendly prompt before the system dialog).
+ * On web: The tap on "Enable" counts as a user gesture, which browsers
+ * require before Notification.requestPermission() can succeed.
  *
- * Once the user grants permission, registers for push notifications (FCM
- * on web, Expo Push on native) and saves the token to Firebase.
+ * On native iOS:
+ * - If permission is undetermined: tapping "Allow" triggers the iOS system
+ *   notification permission dialog.
+ * - If permission was previously denied: shows a "Go to Settings" button
+ *   that opens the iOS Settings app (iOS won't show the dialog again once
+ *   denied).
  *
  * Dismissed state persists so the banner doesn't reappear after the user
  * says "Not now".
  */
 export function NotificationPermissionPrompt() {
-  const { userId } = useUser();
+  const { userId, isAuthenticated } = useUser();
   const [visible, setVisible] = useState(false);
+  const [permStatus, setPermStatus] = useState<PermissionStatus>('undetermined');
   const [slideAnim] = useState(() => new Animated.Value(-200));
   const [fadeAnim] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     let mounted = true;
+
     (async () => {
-      // Don't show if already dismissed or permission already granted.
+      // Check current permission state.
+      const status = await getNotificationPermissionStatus();
+      if (!mounted) return;
+      setPermStatus(status);
+
+      if (status === 'granted') return;
+
+      // Check if the user previously dismissed the banner.
+      const dismissKey = status === 'denied' ? DISMISS_DENIED_KEY : DISMISS_KEY;
       try {
-        const dismissed = await AsyncStorage.getItem(DISMISS_KEY);
+        const dismissed = await AsyncStorage.getItem(dismissKey);
         if (dismissed === 'true') return;
       } catch {}
 
-      // Check current permission state.
-      let alreadyGranted = false;
-      if (Platform.OS === 'web') {
-        if (typeof Notification !== 'undefined') {
-          alreadyGranted = Notification.permission === 'granted';
-        }
-      } else {
-        // On native, NotificationBootstrap auto-requests permission on
-        // login, so this web-only banner is not needed.
-        return;
-      }
-
-      if (alreadyGranted) return;
       if (!mounted) return;
 
       // Small delay so it appears after the main UI loads.
@@ -60,13 +65,13 @@ export function NotificationPermissionPrompt() {
           Animated.timing(fadeAnim, {
             toValue: 1,
             duration: 300,
-            useNativeDriver: true,
+            useNativeDriver: false,
           }),
           Animated.spring(slideAnim, {
             toValue: 0,
             tension: 50,
             friction: 7,
-            useNativeDriver: true,
+            useNativeDriver: false,
           }),
         ]).start();
       }, 1500);
@@ -75,35 +80,55 @@ export function NotificationPermissionPrompt() {
     return () => {
       mounted = false;
     };
-  }, [fadeAnim, slideAnim]);
+  }, [fadeAnim, slideAnim, isAuthenticated]);
 
   const handleEnable = async () => {
+    if (permStatus === 'denied' && Platform.OS !== 'web') {
+      // Permission was already denied — iOS won't show the dialog again.
+      // Open the iOS Settings app so the user can enable notifications.
+      Linking.openSettings();
+      dismiss(false);
+      return;
+    }
+
     const granted = await requestNotificationPermissions();
     if (granted && userId) {
       registerForPushNotifications(userId).catch((e) =>
         console.warn('[NotifPrompt] Registration failed:', e),
       );
     }
-    dismiss();
+    dismiss(true);
   };
 
-  const dismiss = () => {
+  const dismiss = (markDismissed: boolean = true) => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 0,
         duration: 200,
-        useNativeDriver: true,
+        useNativeDriver: false,
       }),
       Animated.timing(slideAnim, {
         toValue: -200,
         duration: 200,
-        useNativeDriver: true,
+        useNativeDriver: false,
       }),
     ]).start(() => setVisible(false));
-    AsyncStorage.setItem(DISMISS_KEY, 'true').catch(() => {});
+
+    if (markDismissed) {
+      const key = permStatus === 'denied' ? DISMISS_DENIED_KEY : DISMISS_KEY;
+      AsyncStorage.setItem(key, 'true').catch(() => {});
+    }
   };
 
   if (!visible) return null;
+
+  const isDenied = permStatus === 'denied' && Platform.OS !== 'web';
+  const buttonText = isDenied ? 'Settings' : 'Enable';
+  const bodyText = isDenied
+    ? 'Notifications are turned off in Settings. Tap to open Settings and enable them.'
+    : Platform.OS === 'web'
+      ? 'Get alerts for new messages, announcements, and events even when this tab is in the background.'
+      : 'Get alerts for new messages, announcements, and events even when the app is closed.';
 
   return (
     <Animated.View
@@ -116,18 +141,22 @@ export function NotificationPermissionPrompt() {
       ]}
     >
       <View style={styles.iconWrap}>
-        <Bell size={20} color="#6366F1" />
+        {isDenied ? (
+          <Settings size={20} color="#6366F1" />
+        ) : (
+          <Bell size={20} color="#6366F1" />
+        )}
       </View>
       <View style={styles.textWrap}>
-        <Text style={styles.title}>Enable Notifications</Text>
-        <Text style={styles.body}>
-          Get alerts for new messages, announcements, and events even when this tab is in the background.
+        <Text style={styles.title}>
+          {isDenied ? 'Notifications Disabled' : 'Enable Notifications'}
         </Text>
+        <Text style={styles.body}>{bodyText}</Text>
       </View>
       <Pressable style={styles.enableBtn} onPress={handleEnable} hitSlop={8}>
-        <Text style={styles.enableText}>Enable</Text>
+        <Text style={styles.enableText}>{buttonText}</Text>
       </Pressable>
-      <Pressable style={styles.closeBtn} onPress={dismiss} hitSlop={8}>
+      <Pressable style={styles.closeBtn} onPress={() => dismiss(true)} hitSlop={8}>
         <X size={16} color="#999" />
       </Pressable>
     </Animated.View>

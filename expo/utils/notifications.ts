@@ -166,6 +166,27 @@ export function isActiveChat(chatId: string): boolean {
 // Permissions & push token
 // ---------------------------------------------------------------------------
 
+/**
+ * Request notification permissions. On native iOS this triggers the system
+ * notification permission dialog. Returns true if granted, false otherwise.
+ * Also exports the current permission status so callers can distinguish
+ * between "never asked" (can show dialog) and "denied" (must go to Settings).
+ */
+export type PermissionStatus = 'granted' | 'undetermined' | 'denied';
+
+export async function getNotificationPermissionStatus(): Promise<PermissionStatus> {
+  if (Platform.OS === 'web') {
+    if (typeof Notification === 'undefined') return 'denied';
+    if (Notification.permission === 'granted') return 'granted';
+    if (Notification.permission === 'denied') return 'denied';
+    return 'undetermined';
+  }
+  const { status } = await Notifications.getPermissionsAsync();
+  if (status === 'granted') return 'granted';
+  if (status === 'denied') return 'denied';
+  return 'undetermined';
+}
+
 export async function requestNotificationPermissions(): Promise<boolean> {
   if (Platform.OS === 'web') {
     // Use the browser's Notifications API on web.
@@ -184,8 +205,16 @@ export async function requestNotificationPermissions(): Promise<boolean> {
   let finalStatus = existingStatus;
 
   if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
+    console.log('[Notifications] requestNotificationPermissions: requesting...');
+    const result = await Notifications.requestPermissionsAsync({
+      ios: {
+        allowAlert: true,
+        allowBadge: true,
+        allowSound: true,
+      },
+    });
+    finalStatus = result.status;
+    console.log('[Notifications] requestNotificationPermissions result:', finalStatus);
   }
 
   return finalStatus === 'granted';
@@ -258,14 +287,23 @@ export async function registerForPushNotifications(userId?: string): Promise<str
     // On iOS this triggers the system notification permission dialog.
     try {
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      console.log('[Notifications] Native existing permission status:', existingStatus);
       if (existingStatus !== 'granted') {
         console.log('[Notifications] Requesting notification permission on native...');
-        const { status } = await Notifications.requestPermissionsAsync();
-        alreadyGranted = status === 'granted';
+        const result = await Notifications.requestPermissionsAsync({
+          ios: {
+            allowAlert: true,
+            allowBadge: true,
+            allowSound: true,
+          },
+        });
+        console.log('[Notifications] Permission request result:', JSON.stringify(result));
+        alreadyGranted = result.status === 'granted';
       } else {
         alreadyGranted = true;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Notifications] Permission request threw error:', err);
       return null;
     }
   }
