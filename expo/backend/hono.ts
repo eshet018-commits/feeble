@@ -5,7 +5,7 @@ import { cors } from "hono/cors";
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
 import { startPushService } from "./push-service";
-import { messaging, isConfigured } from "./firebase";
+import { messaging, isConfigured, isApnsToken } from "./firebase";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -32,14 +32,23 @@ app.post("/push", async (c) => {
     }
 
     const isExpoToken = (t: string) => t.startsWith("ExponentPushToken");
+    // Expo tokens go to the Expo Push API; everything else (FCM tokens AND
+    // raw APNs tokens) goes through FCM messaging, which auto-converts
+    // APNs tokens via Instance ID batchImport.
     const expoMessages = messages.filter((m: any) => isExpoToken(m.to));
-    const fcmMessages = messages.filter((m: any) => !isExpoToken(m.to));
+    const fcmOrApnsMessages = messages.filter((m: any) => !isExpoToken(m.to));
+
+    const apnsCount = fcmOrApnsMessages.filter((m: any) => isApnsToken(m.to)).length;
+    const fcmCount = fcmOrApnsMessages.length - apnsCount;
+    if (fcmOrApnsMessages.length > 0) {
+      console.log(`[PushEndpoint] Token breakdown: ${fcmCount} FCM, ${apnsCount} APNs, ${expoMessages.length} Expo`);
+    }
 
     let sent = 0;
 
-    // Send FCM pushes via Admin SDK.
-    if (fcmMessages.length > 0 && messaging) {
-      const tokens = fcmMessages.map((m: any) => m.to);
+    // Send FCM/APNs pushes via backend messaging (handles APNs→FCM conversion).
+    if (fcmOrApnsMessages.length > 0 && messaging) {
+      const tokens = fcmOrApnsMessages.map((m: any) => m.to);
       const batchChunks: string[][] = [];
       for (let i = 0; i < tokens.length; i += 500) {
         batchChunks.push(tokens.slice(i, i + 500));
@@ -48,7 +57,7 @@ app.post("/push", async (c) => {
       for (const chunk of batchChunks) {
         // Use the first message's title/body/data (all messages in a batch
         // have the same content, just different recipients).
-        const msg = fcmMessages[0];
+        const msg = fcmOrApnsMessages[0];
         const data: Record<string, string> = {};
         if (msg.data) {
           for (const [k, v] of Object.entries(msg.data)) {

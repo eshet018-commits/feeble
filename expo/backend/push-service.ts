@@ -1,4 +1,4 @@
-import { database, messaging, isConfigured } from './firebase';
+import { database, messaging, isConfigured, isApnsToken } from './firebase';
 
 /**
  * Backend push notification service using Firebase Admin SDK.
@@ -207,11 +207,18 @@ async function sendPushNotifications(
 ): Promise<void> {
   if (tokens.length === 0) return;
 
-  const fcmTokens = tokens.filter((t) => !isExpoPushToken(t));
+  // Categorize tokens: Expo tokens go to Expo Push API, everything else
+  // (FCM tokens AND raw APNs tokens) goes to FCM via the backend messaging
+  // class, which auto-converts APNs tokens via Instance ID batchImport.
   const expoTokens = tokens.filter((t) => isExpoPushToken(t));
+  const fcmOrApnsTokens = tokens.filter((t) => !isExpoPushToken(t));
 
-  // Send FCM pushes (web tokens) via Admin SDK messaging.
-  if (fcmTokens.length > 0 && messaging) {
+  const apnsCount = fcmOrApnsTokens.filter((t) => isApnsToken(t)).length;
+  const fcmCount = fcmOrApnsTokens.length - apnsCount;
+  console.log(`[PushService] Token breakdown: ${fcmCount} FCM, ${apnsCount} APNs, ${expoTokens.length} Expo`);
+
+  // Send FCM/APNs pushes via backend messaging (handles APNs→FCM conversion).
+  if (fcmOrApnsTokens.length > 0 && messaging) {
     try {
       // sendEachForMulticast handles batches internally (up to 500 per call).
       const messageData: Record<string, string> = {};
@@ -222,8 +229,8 @@ async function sendPushNotifications(
       }
 
       const batchChunks: string[][] = [];
-      for (let i = 0; i < fcmTokens.length; i += 500) {
-        batchChunks.push(fcmTokens.slice(i, i + 500));
+      for (let i = 0; i < fcmOrApnsTokens.length; i += 500) {
+        batchChunks.push(fcmOrApnsTokens.slice(i, i + 500));
       }
 
       for (const chunk of batchChunks) {

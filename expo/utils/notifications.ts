@@ -381,33 +381,26 @@ export async function registerForPushNotifications(userId?: string): Promise<str
     }
   }
 
-  // Native: use the Expo Push API to get an Expo push token.
-  // The projectId is required for EAS builds and recommended for Expo Go.
-  // If it fails with the configured projectId, try without it as a fallback.
+  // Native: use getDevicePushTokenAsync() to get the raw platform token.
+  // On iOS this returns the APNs token; on Android it returns the FCM token.
+  // We bypass the Expo Push API entirely — it requires EAS + APNs credentials
+  // that aren't available in this environment. Instead, the backend converts
+  // APNs tokens to FCM registration tokens via the Instance ID batchImport API
+  // and sends via Firebase Cloud Messaging (FCM HTTP v1 API), which is already
+  // configured with the user's Firebase service account.
   try {
-    const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
-    console.log('[Notifications] Getting Expo push token with projectId:', projectId || '(none)');
-
-    let ticket;
-    try {
-      ticket = await Notifications.getExpoPushTokenAsync(
-        projectId ? { projectId } : undefined,
-      );
-    } catch (innerErr) {
-      console.warn('[Notifications] getExpoPushTokenAsync with projectId failed, trying without:', innerErr);
-      ticket = await Notifications.getExpoPushTokenAsync();
-    }
-
+    console.log('[Notifications] Getting device push token (APNs/FCM)...');
+    const ticket = await Notifications.getDevicePushTokenAsync();
     const token = ticket.data;
     await AsyncStorage.setItem(PUSH_TOKEN_KEY, token);
-    console.log('[Notifications] Expo push token obtained:', token.slice(0, 25) + '...');
+    console.log('[Notifications] Device push token obtained:', token.slice(0, 25) + '...', 'type:', ticket.type);
     if (userId) {
       await firebaseClient.savePushToken(userId, token);
       console.log('[Notifications] Push token saved to Firebase for user:', userId);
     }
     return token;
   } catch (error) {
-    console.warn('[Notifications] Failed to get Expo push token:', String(error).slice(0, 200));
+    console.warn('[Notifications] Failed to get device push token:', String(error).slice(0, 200));
     return null;
   }
 }
@@ -521,44 +514,56 @@ export async function sendTestNotification(
     details.push(`Push token found: ${pushToken}`);
     remoteAttempted = true;
 
-    // Send a remote push to our own device via the Expo Push API.
-    // This tests the full chain: Expo Push API → APNs → home screen.
-    const res = await fetch(EXPO_PUSH_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify([{
-        to: token,
-        title: 'Test Notification (Remote)',
-        body: 'This verifies remote push works — you should see this even when the app is closed.',
-        data: { kind: 'default', test: true },
-        sound: true,
-        priority: 'high',
-      }]),
-    });
+    // Send a remote push through our backend, which converts APNs tokens to
+    // FCM registration tokens and sends via Firebase Cloud Messaging (FCM
+    // HTTP v1 API). This bypasses the Expo Push API entirely — no EAS or
+    // APNs credentials registration with Expo required.
+    const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL || process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL || '';
 
-    const json = (await res.json()) as any;
-
-    if (json?.errors) {
-      remoteError = `Expo Push API errors: ${JSON.stringify(json.errors).slice(0, 200)}`;
+    if (!baseUrl) {
+      remoteError = 'No backend URL configured — cannot send remote push. Set EXPO_PUBLIC_RORK_API_BASE_URL.';
       details.push(remoteError);
-      console.warn('[Notifications] Remote test push API errors:', json.errors);
-    } else if (Array.isArray(json?.data)) {
-      for (const ticket of json.data) {
-        if (ticket?.status === 'error') {
-          remoteError = `Push ticket error: ${ticket.message} — ${JSON.stringify(ticket.details).slice(0, 200)}`;
-          details.push(remoteError);
-          console.warn('[Notifications] Remote test push ticket error:', ticket.message, ticket.details);
-        } else {
-          remoteSuccess = true;
-          details.push('Remote push accepted by Expo Push API. It should appear on your home screen shortly.');
-        }
-      }
     } else {
-      remoteError = `Unexpected Expo Push API response: ${JSON.stringify(json).slice(0, 200)}`;
-      details.push(remoteError);
+      try {
+        const res = await fetch(`${baseUrl}/api/push`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            messages: [{
+              to: token,
+              title: 'Test Notification (Remote)',
+              body: 'This verifies remote push works — you should see this even when the app is closed.',
+              data: { kind: 'default', test: true },
+              sound: true,
+              priority: 'high',
+            }],
+          }),
+        });
+
+        const json = (await res.json()) as any;
+        console.log('[Notifications] Remote test push backend response:', JSON.stringify(json).slice(0, 200));
+
+        if (json?.sent && json.sent > 0) {
+          remoteSuccess = true;
+          details.push('Remote push accepted by backend. It should appear on your home screen shortly.');
+        } else if (json?.error) {
+          remoteError = `Backend push error: ${String(json.error).slice(0, 200)}`;
+          details.push(remoteError);
+        } else if (json?.errors) {
+          remoteError = `Push errors: ${JSON.stringify(json.errors).slice(0, 200)}`;
+          details.push(remoteError);
+        } else {
+          remoteError = `Unexpected backend response: ${JSON.stringify(json).slice(0, 200)}`;
+          details.push(remoteError);
+        }
+      } catch (fetchErr) {
+        remoteError = `Failed to reach backend: ${String(fetchErr).slice(0, 150)}`;
+        details.push(remoteError);
+        console.warn('[Notifications] Remote test push fetch failed:', fetchErr);
+      }
     }
   } catch (error) {
     remoteError = `Remote push failed: ${String(error).slice(0, 150)}`;
@@ -622,88 +627,58 @@ export async function sendRemotePushes(
   }));
 
   try {
-    if (Platform.OS === 'web') {
-      // Web: exp.host blocks cross-origin browser fetches (CORS), so we
-      // route through our backend /api/push REST endpoint which forwards
-      // to FCM (for web tokens) or the Expo Push API (for native tokens).
-      // Try multiple backend URLs — the backend may be deployed at either
-      // the RORK_API_BASE_URL or the RORK_FUNCTIONS_URL.
-      const candidateUrls = [
-        process.env.EXPO_PUBLIC_RORK_API_BASE_URL,
-        process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL,
-        typeof window !== 'undefined' ? window.location.origin : '',
-      ].filter(Boolean) as string[];
+    // All platforms route through the backend /api/push endpoint.
+    // The backend handles:
+    //   - FCM tokens (web, Android) → FCM HTTP v1 API
+    //   - APNs tokens (iOS) → Instance ID batchImport → FCM HTTP v1 API
+    //   - Expo tokens (legacy) → Expo Push API (fallback)
+    // This bypasses the need for EAS/APNs credentials with Expo.
+    const candidateUrls = [
+      process.env.EXPO_PUBLIC_RORK_API_BASE_URL,
+      process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL,
+      typeof window !== 'undefined' ? window.location.origin : '',
+    ].filter(Boolean) as string[];
 
-      if (candidateUrls.length === 0) {
-        console.log('[Notifications] No backend URL available — skipping web push');
-        return;
-      }
+    // On native, also try the toolkit URL as a fallback.
+    if (Platform.OS !== 'web' && process.env.EXPO_PUBLIC_TOOLKIT_URL) {
+      candidateUrls.push(process.env.EXPO_PUBLIC_TOOLKIT_URL);
+    }
 
-      for (let i = 0; i < messages.length; i += 100) {
-        const batch = messages.slice(i, i + 100);
-        let delivered = false;
-        for (const baseUrl of candidateUrls) {
-          try {
-            const res = await fetch(`${baseUrl}/api/push`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-              },
-              body: JSON.stringify({ messages: batch }),
-            });
-            if (!res.ok) continue; // try next URL
-            const json = (await res.json()) as any;
-            if (json?.sent) {
-              console.log(`[Notifications] Web push proxy: ${json.sent} delivered (${batch.length} tokens)`);
-            }
-            delivered = true;
-            break; // success — no need to try other URLs
-          } catch {
-            // try next URL
+    if (candidateUrls.length === 0) {
+      console.log('[Notifications] No backend URL available — skipping push');
+      return;
+    }
+
+    for (let i = 0; i < messages.length; i += 100) {
+      const batch = messages.slice(i, i + 100);
+      let delivered = false;
+      for (const baseUrl of candidateUrls) {
+        try {
+          const res = await fetch(`${baseUrl}/api/push`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+            body: JSON.stringify({ messages: batch }),
+          });
+          if (!res.ok) continue; // try next URL
+          const json = (await res.json()) as any;
+          if (json?.sent) {
+            console.log(`[Notifications] Push proxy: ${json.sent} delivered (${batch.length} tokens)`);
           }
-        }
-        if (!delivered) {
-          console.log('[Notifications] All backend push proxies failed — skipping batch');
+          delivered = true;
+          break; // success — no need to try other URLs
+        } catch {
+          // try next URL
         }
       }
-    } else {
-      // Native: POST directly to the Expo Push API. No CORS on native, so
-      // this delivers real APNs/FCM pushes to home screens immediately.
-      // Batch in groups of 100 (Expo Push API limit per request).
-      for (let i = 0; i < messages.length; i += 100) {
-        const batch = messages.slice(i, i + 100);
-        const res = await fetch(EXPO_PUSH_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify(batch),
-        });
-        const json = (await res.json()) as any;
-        if (json?.errors) {
-          console.warn('[Notifications] Expo Push API errors:', json.errors);
-        }
-        if (Array.isArray(json?.data)) {
-          let ok = 0;
-          let fail = 0;
-          for (const ticket of json.data) {
-            if (ticket?.status === 'error') {
-              fail++;
-              console.warn('[Notifications] Push ticket error:', ticket.message, ticket.details);
-            } else {
-              ok++;
-            }
-          }
-          console.log(`[Notifications] Push batch: ${ok} delivered, ${fail} failed (${batch.length} tokens)`);
-        }
+      if (!delivered) {
+        console.log('[Notifications] All backend push proxies failed — skipping batch');
       }
     }
   } catch (error) {
     // Fire-and-forget: never throw, so the sender's action is not blocked.
-    // Use console.log (not console.error/warn) to avoid the runtime error
-    // detector flagging this as a crash.
     console.log('[Notifications] Remote push skipped:', String(error).slice(0, 100));
   }
 }

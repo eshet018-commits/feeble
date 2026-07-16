@@ -23,6 +23,10 @@ interface ServiceAccount {
   private_key_id?: string;
 }
 
+// Cache of APNs token → FCM registration token conversions.
+// The Instance ID batchImport API converts raw APNs tokens to FCM tokens.
+const apnsToFcmCache = new Map<string, string>();
+
 let serviceAccount: ServiceAccount | null = null;
 let dbURL: string | null | undefined = null;
 let projId: string | null = null;
@@ -440,9 +444,81 @@ class Database {
 }
 
 // ---------------------------------------------------------------------------
+// APNs token → FCM registration token conversion
+//
+// On iOS, getDevicePushTokenAsync() returns a raw APNs token (hex string).
+// FCM can't send directly to APNs tokens — they must first be converted to
+// FCM registration tokens via the Instance ID batchImport API:
+//   POST https://iid.googleapis.com/iid/v1:batchImport
+//
+// This requires an OAuth2 access token (same one we already mint for DB/FCM).
+// The response contains a valid FCM registration token we can use with the
+// FCM HTTP v1 API to deliver push notifications to iOS devices.
+// ---------------------------------------------------------------------------
+
+async function convertApnsTokenToFcm(apnsToken: string): Promise<string | null> {
+  // Return cached conversion if available.
+  const cached = apnsToFcmCache.get(apnsToken);
+  if (cached) return cached;
+
+  if (!serviceAccount) return null;
+  const token = await getAccessToken();
+  if (!token) return null;
+
+  try {
+    const res = await fetch('https://iid.googleapis.com/iid/v1:batchImport', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        application: projId || serviceAccount.project_id,
+        sandbox: false,
+        apns_tokens: [apnsToken],
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.warn(`[Backend Firebase] batchImport failed: ${res.status} ${text.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = (await res.json()) as { results?: Array<{ apns_token: string; status: string; registration_token?: string }> };
+    const result = data?.results?.[0];
+    if (result?.status === 'OK' && result.registration_token) {
+      console.log(`[Backend Firebase] APNs→FCM conversion succeeded: ${apnsToken.slice(0, 12)}... → ${result.registration_token.slice(0, 20)}...`);
+      apnsToFcmCache.set(apnsToken, result.registration_token);
+      return result.registration_token;
+    } else {
+      console.warn(`[Backend Firebase] APNs→FCM conversion failed for token ${apnsToken.slice(0, 12)}...: status=${result?.status}`);
+      return null;
+    }
+  } catch (e) {
+    console.warn('[Backend Firebase] APNs→FCM conversion error:', e);
+    return null;
+  }
+}
+
+/**
+ * Determine if a token is a raw APNs token (hex string, typically 64 chars
+ * on iOS). These need to be converted to FCM registration tokens before
+ * we can send via FCM.
+ */
+function isApnsToken(token: string): boolean {
+  // Expo push tokens start with 'ExponentPushToken'
+  if (token.startsWith('ExponentPushToken')) return false;
+  // FCM tokens contain colons or are very long (>100 chars)
+  // APNs tokens are hex strings (0-9a-f), typically 64 chars
+  return /^[0-9a-fA-F]{32,}$/.test(token);
+}
+
+// ---------------------------------------------------------------------------
 // Messaging — FCM HTTP v1 API
 // Sends data-only messages so the service worker's onBackgroundMessage
 // handler has full control over notification display (no duplicates).
+// Handles FCM tokens directly, and converts APNs tokens to FCM first.
 // ---------------------------------------------------------------------------
 
 interface MulticastResponse {
@@ -457,8 +533,8 @@ class Messaging {
     android?: { priority: string };
   }): Promise<MulticastResponse> {
     if (!projId) throw new Error("Project ID not configured");
-    const token = await getAccessToken();
-    if (!token) throw new Error("No access token available");
+    const accessToken = await getAccessToken();
+    if (!accessToken) throw new Error("No access token available");
 
     // Merge notification title/body into data for data-only web push.
     // The service worker extracts title/body from payload.data.
@@ -470,13 +546,44 @@ class Messaging {
 
     const responses: Array<{ success: boolean; error?: any }> = [];
 
+    // Process each token — convert APNs tokens to FCM first.
+    const fcmTokens: string[] = [];
+    for (const tok of params.tokens) {
+      if (isApnsToken(tok)) {
+        const fcmToken = await convertApnsTokenToFcm(tok);
+        if (fcmToken) {
+          fcmTokens.push(fcmToken);
+        } else {
+          responses.push({ success: false, error: new Error(`APNs→FCM conversion failed for ${tok.slice(0, 12)}...`) });
+        }
+      } else {
+        fcmTokens.push(tok);
+      }
+    }
+
     await Promise.all(
-      params.tokens.map(async (tok) => {
+      fcmTokens.map(async (tok) => {
         try {
           const message: Record<string, any> = {
             token: tok,
             data: fullData,
             android: { priority: params.android?.priority || "high" },
+            apns: {
+              headers: {
+                'apns-priority': '10',
+                'apns-push-type': 'alert',
+              },
+              payload: {
+                aps: {
+                  alert: {
+                    title: params.notification.title,
+                    body: params.notification.body,
+                  },
+                  sound: 'default',
+                  'content-available': 1,
+                },
+              },
+            },
             webpush: {
               headers: {
                 Urgency: "high",
@@ -490,7 +597,7 @@ class Messaging {
             {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${token}`,
+                Authorization: `Bearer ${accessToken}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({ message }),
@@ -520,4 +627,4 @@ class Messaging {
 const database = isConfigured ? new Database() : null;
 const messaging = isConfigured ? new Messaging() : null;
 
-export { database, messaging, isConfigured };
+export { database, messaging, isConfigured, isApnsToken, convertApnsTokenToFcm };

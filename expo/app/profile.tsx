@@ -241,7 +241,7 @@ export default function ProfileScreen() {
       } else if (result.localShown && result.remoteAttempted && !result.remoteSuccess) {
         Alert.alert(
           'Local Works, Remote Failed',
-          `Local notifications work, but the remote push (needed for home-screen alerts when the app is closed) failed.\n\n${lines}\n\nRemote pushes require a valid Expo push token and a proper EAS build with APNs credentials.`,
+          `Local notifications work, but the remote push (needed for home-screen alerts when the app is closed) failed.\n\n${lines}\n\nThis usually means the backend couldn't convert the APNs token or Firebase Cloud Messaging failed to deliver. Check that the Firebase service account key is valid and APNs is configured in the Firebase console.`,
         );
       } else {
         Alert.alert(
