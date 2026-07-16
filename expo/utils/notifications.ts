@@ -414,6 +414,44 @@ export async function unregisterPushToken(userId: string): Promise<void> {
   }
 }
 
+/**
+ * Send a local test notification immediately. On native this uses
+ * expo-notifications; on web it uses the browser's Notifications API.
+ * Useful for verifying that the device is correctly configured to show alerts.
+ */
+export async function sendTestNotification(): Promise<void> {
+  if (Platform.OS === 'web') {
+    const shown = showWebNotification(
+      'Test Notification',
+      'This is what your notifications will look like.',
+      { kind: 'default' },
+    );
+    if (!shown) {
+      throw new Error('Web notification permission not granted');
+    }
+    return;
+  }
+
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') {
+      throw new Error('Notification permission not granted');
+    }
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Test Notification',
+        body: 'This is what your notifications will look like.',
+        data: { kind: 'default' },
+        sound: true,
+      },
+      trigger: null,
+    });
+  } catch (error) {
+    console.warn('[Notifications] Test notification failed:', error);
+    throw error;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Remote push — sends real notifications that appear on the device's home
 // screen / lock screen even when the app is closed or backgrounded.

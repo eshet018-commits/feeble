@@ -48,45 +48,49 @@ export function NotificationPermissionPrompt() {
     let mounted = true;
 
     (async () => {
-      // Check current permission state.
-      const status = await getNotificationPermissionStatus();
-      if (!mounted) return;
-      setPermStatus(status);
-
-      if (status === 'granted') return;
-
-      // On native, keep the banner visible so users always have a way to enable
-      // notifications. On web, respect the user's dismissal to reduce annoyance.
-      if (!IS_NATIVE) {
-        const dismissKey = status === 'denied' ? DISMISS_DENIED_KEY : DISMISS_KEY;
-        try {
-          const dismissed = await AsyncStorage.getItem(dismissKey);
-          if (dismissed === 'true') return;
-        } catch {}
-      }
-
-      if (!mounted) return;
-
-      // Show the banner after the main UI has settled. On native we use a shorter
-      // delay so the user notices the prompt right after login.
-      const delay = IS_NATIVE ? 600 : 1500;
-      setTimeout(() => {
+      try {
+        // Check current permission state.
+        const status = await getNotificationPermissionStatus();
         if (!mounted) return;
-        setVisible(true);
-        Animated.parallel([
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 300,
-            useNativeDriver: false,
-          }),
-          Animated.spring(slideAnim, {
-            toValue: 0,
-            tension: 50,
-            friction: 7,
-            useNativeDriver: false,
-          }),
-        ]).start();
-      }, delay);
+        setPermStatus(status);
+
+        if (status === 'granted') return;
+
+        // On native, keep the banner visible so users always have a way to enable
+        // notifications. On web, respect the user's dismissal to reduce annoyance.
+        if (!IS_NATIVE) {
+          const dismissKey = status === 'denied' ? DISMISS_DENIED_KEY : DISMISS_KEY;
+          try {
+            const dismissed = await AsyncStorage.getItem(dismissKey);
+            if (dismissed === 'true') return;
+          } catch {}
+        }
+
+        if (!mounted) return;
+
+        // Show the banner after the main UI has settled. On native we use a shorter
+        // delay so the user notices the prompt right after login.
+        const delay = IS_NATIVE ? 600 : 1500;
+        setTimeout(() => {
+          if (!mounted) return;
+          setVisible(true);
+          Animated.parallel([
+            Animated.timing(fadeAnim, {
+              toValue: 1,
+              duration: 300,
+              useNativeDriver: false,
+            }),
+            Animated.spring(slideAnim, {
+              toValue: 0,
+              tension: 50,
+              friction: 7,
+              useNativeDriver: false,
+            }),
+          ]).start();
+        }, delay);
+      } catch (error) {
+        console.warn('[NotifPrompt] Failed to check permission status:', error);
+      }
     })();
 
     return () => {

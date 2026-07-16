@@ -19,6 +19,7 @@ import {
   requestNotificationPermissions,
   registerForPushNotifications,
   getNotificationPermissionStatus,
+  sendTestNotification,
   type PermissionStatus,
 } from '@/utils/notifications';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider, updateEmail } from 'firebase/auth';
@@ -40,6 +41,7 @@ export default function ProfileScreen() {
   const [isChangingEmail, setIsChangingEmail] = useState(false);
   const [notifStatus, setNotifStatus] = useState<PermissionStatus>('undetermined');
   const [notifLoading, setNotifLoading] = useState(false);
+  const [testNotifLoading, setTestNotifLoading] = useState(false);
 
   const handleSaveChanges = async () => {
     if (!newName.trim()) {
@@ -219,6 +221,25 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleSendTestNotification = async () => {
+    setTestNotifLoading(true);
+    try {
+      await sendTestNotification();
+      Alert.alert('Test Notification Sent', 'If notifications are enabled for this app, you should see it shortly.');
+    } catch (error) {
+      Alert.alert(
+        'Test Notification Failed',
+        'Make sure notification permission is granted in iOS Settings, then try again.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ],
+      );
+    } finally {
+      setTestNotifLoading(false);
+    }
+  };
+
   useEffect(() => {
     refreshNotifStatus();
   }, []);
@@ -298,6 +319,22 @@ export default function ProfileScreen() {
                 <ChevronRight size={20} color="#C7C7CC" />
               )}
             </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.testNotifButton, notifStatus !== 'granted' && styles.testNotifButtonDisabled]}
+            onPress={handleSendTestNotification}
+            disabled={testNotifLoading || notifStatus !== 'granted'}
+            activeOpacity={0.7}
+          >
+            {testNotifLoading ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Bell size={18} color="#FFFFFF" />
+                <Text style={styles.testNotifButtonText}>Send Test Notification</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -652,6 +689,29 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     color: '#FF3B30',
+  },
+  testNotifButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#5856D6',
+    height: 48,
+    borderRadius: 12,
+    marginTop: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  testNotifButtonDisabled: {
+    backgroundColor: '#C7C7CC',
+  },
+  testNotifButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   changePasswordButton: {
     flexDirection: 'row',

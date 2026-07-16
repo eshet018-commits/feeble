@@ -20,8 +20,9 @@ import {
   getNotificationPermissionStatus,
   requestNotificationPermissions,
 } from "@/utils/notifications";
-import { Platform } from "react-native";
+import { Platform, Alert, Linking } from "react-native";
 import { NotificationPermissionPrompt } from "@/components/NotificationPermissionPrompt";
+import * as Notifications from "expo-notifications";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -48,29 +49,57 @@ function NotificationBootstrap() {
       return;
     }
 
-    // On native iOS/Android, ask for the system notification permission
-    // right after login. We do this explicitly rather than inside the
-    // token-registration helper so that any error is surfaced and the
-    // iOS system dialog is triggered as soon as the user is authenticated.
-    getNotificationPermissionStatus().then((status) => {
-      console.log('[NotificationBootstrap] Current permission status:', status);
-      if (status === 'granted') {
-        registerForPushNotifications(userId).catch((e) =>
-          console.warn("[Notifications] Token registration failed:", e),
-        );
-      } else if (status === 'undetermined') {
-        requestNotificationPermissions()
-          .then((granted) => {
-            console.log('[NotificationBootstrap] Permission request result:', granted);
-            if (granted) {
-              registerForPushNotifications(userId).catch((e) =>
-                console.warn("[Notifications] Token registration failed:", e),
-              );
-            }
-          })
-          .catch((e) => console.warn("[Notifications] Permission request failed:", e));
-      }
-    });
+    // On native iOS/Android, request the system notification permission dialog
+    // directly after login. requestPermissionsAsync() is safe to call repeatedly:
+    // it shows the iOS dialog only when the status is undetermined, and returns
+    // the current status otherwise. We wait a short beat so the root layout is
+    // fully mounted and the app is in the foreground, which iOS requires for the
+    // permission dialog to appear.
+    const timer = setTimeout(() => {
+      (async () => {
+        try {
+          const status = await getNotificationPermissionStatus();
+          console.log('[NotificationBootstrap] Permission status before request:', status);
+
+          if (status === 'granted') {
+            console.log('[NotificationBootstrap] Permission already granted, registering token');
+            const token = await registerForPushNotifications(userId);
+            console.log('[NotificationBootstrap] Push token:', token ? `${token.slice(0, 20)}...` : 'none');
+            return;
+          }
+
+          console.log('[NotificationBootstrap] Requesting notification permission dialog...');
+          const result = await Notifications.requestPermissionsAsync({
+            ios: {
+              allowAlert: true,
+              allowBadge: true,
+              allowSound: true,
+            },
+          });
+          console.log('[NotificationBootstrap] Permission request returned:', result.status);
+
+          if (result.status === 'granted') {
+            const token = await registerForPushNotifications(userId);
+            console.log('[NotificationBootstrap] Push token after grant:', token ? `${token.slice(0, 20)}...` : 'none');
+          } else if (result.status === 'denied') {
+            // iOS will not show the system dialog again once denied. Surface a
+            // clear, one-time alert that points the user to Settings.
+            Alert.alert(
+              'Notifications Disabled',
+              'To get alerts when the app is closed, enable notifications for this app in iOS Settings.',
+              [
+                { text: 'Not Now', style: 'cancel' },
+                { text: 'Open Settings', onPress: () => Linking.openSettings().catch(() => {}) },
+              ],
+            );
+          }
+        } catch (error) {
+          console.warn('[NotificationBootstrap] Notification setup failed:', error);
+        }
+      })();
+    }, 1200);
+
+    return () => clearTimeout(timer);
   }, [isAuthenticated, userId]);
 
   // Remove the stored push token on sign-out so the user stops receiving
