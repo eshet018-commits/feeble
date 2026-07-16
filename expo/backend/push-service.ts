@@ -1,4 +1,4 @@
-import { database, messaging, isConfigured, isApnsToken } from './firebase';
+import { database, messaging, isConfigured, isApnsToken, sendApnsPush } from './firebase';
 
 /**
  * Backend push notification service using Firebase Admin SDK.
@@ -208,31 +208,54 @@ async function sendPushNotifications(
 ): Promise<void> {
   if (tokens.length === 0) return;
 
-  // Categorize tokens: Expo tokens go to Expo Push API, everything else
-  // (FCM tokens AND raw APNs tokens) goes to the backend messaging class,
-  // which sends APNs tokens directly via APNs HTTP/2 API and FCM tokens via
-  // FCM HTTP v1 API.
+  // Categorize tokens into three groups: Expo, APNs (direct), and FCM.
+  // APNs tokens are sent directly via APNs HTTP/2 API — completely independent
+  // of Firebase auth. This ensures iOS pushes work even when Firebase OAuth
+  // is broken (the 401 DB errors don't affect APNs delivery).
   const expoTokens = tokens.filter((t) => isExpoPushToken(t));
-  const fcmOrApnsTokens = tokens.filter((t) => !isExpoPushToken(t));
+  const apnsTokens = tokens.filter((t) => !isExpoPushToken(t) && isApnsToken(t));
+  const fcmTokens = tokens.filter((t) => !isExpoPushToken(t) && !isApnsToken(t));
 
-  const apnsCount = fcmOrApnsTokens.filter((t) => isApnsToken(t)).length;
-  const fcmCount = fcmOrApnsTokens.length - apnsCount;
-  console.log(`[PushService] Token breakdown: ${fcmCount} FCM, ${apnsCount} APNs, ${expoTokens.length} Expo`);
+  console.log(`[PushService] Token breakdown: ${fcmTokens.length} FCM, ${apnsTokens.length} APNs, ${expoTokens.length} Expo`);
 
-  // Send FCM/APNs pushes via backend messaging (direct APNs + FCM HTTP v1).
-  if (fcmOrApnsTokens.length > 0 && messaging) {
-    try {
-      // sendEachForMulticast handles batches internally (up to 500 per call).
-      const messageData: Record<string, string> = {};
-      if (data) {
-        for (const [k, v] of Object.entries(data)) {
-          messageData[k] = typeof v === 'string' ? v : JSON.stringify(v);
+  const messageData: Record<string, string> = {};
+  if (data) {
+    for (const [k, v] of Object.entries(data)) {
+      messageData[k] = typeof v === 'string' ? v : JSON.stringify(v);
+    }
+  }
+
+  // Send APNs tokens directly via APNs HTTP/2 API (no Firebase dependency).
+  if (apnsTokens.length > 0) {
+    console.log(`[PushService] Sending ${apnsTokens.length} push(es) via direct APNs`);
+    let apnsOk = 0;
+    let apnsFail = 0;
+    await Promise.all(
+      apnsTokens.map(async (tok) => {
+        try {
+          const success = await sendApnsPush({
+            token: tok,
+            title,
+            body,
+            data: messageData,
+            priority: 'high',
+          });
+          if (success) apnsOk++;
+          else apnsFail++;
+        } catch {
+          apnsFail++;
         }
-      }
+      }),
+    );
+    console.log(`[PushService] APNs direct: ${apnsOk} delivered, ${apnsFail} failed (${apnsTokens.length} tokens)`);
+  }
 
+  // Send FCM tokens via FCM HTTP v1 API (requires Firebase auth).
+  if (fcmTokens.length > 0 && messaging) {
+    try {
       const batchChunks: string[][] = [];
-      for (let i = 0; i < fcmOrApnsTokens.length; i += 500) {
-        batchChunks.push(fcmOrApnsTokens.slice(i, i + 500));
+      for (let i = 0; i < fcmTokens.length; i += 500) {
+        batchChunks.push(fcmTokens.slice(i, i + 500));
       }
 
       for (const chunk of batchChunks) {

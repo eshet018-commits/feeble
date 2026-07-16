@@ -392,11 +392,8 @@ export async function registerForPushNotifications(userId?: string): Promise<str
 
   // Native: use getDevicePushTokenAsync() to get the raw platform token.
   // On iOS this returns the APNs token; on Android it returns the FCM token.
-  // We bypass the Expo Push API entirely — it requires EAS + APNs credentials
-  // that aren't available in this environment. Instead, the backend converts
-  // APNs tokens to FCM registration tokens via the Instance ID batchImport API
-  // and sends via Firebase Cloud Messaging (FCM HTTP v1 API), which is already
-  // configured with the user's Firebase service account.
+  // The backend sends APNs tokens directly via the APNs HTTP/2 API using the
+  // .p8 key (completely bypasses Firebase), and FCM tokens via FCM HTTP v1.
   try {
     console.log('[Notifications] Getting device push token (APNs/FCM)...');
     const ticket = await Notifications.getDevicePushTokenAsync();
@@ -530,10 +527,9 @@ export async function sendTestNotification(
     details.push(`Push token found: ${pushToken}`);
     remoteAttempted = true;
 
-    // Send a remote push through our backend, which converts APNs tokens to
-    // FCM registration tokens and sends via Firebase Cloud Messaging (FCM
-    // HTTP v1 API). This bypasses the Expo Push API entirely — no EAS or
-    // APNs credentials registration with Expo required.
+    // Send a remote push through our backend. APNs tokens (iOS) are sent
+    // directly via the APNs HTTP/2 API using the .p8 key — completely
+    // independent of Firebase. FCM tokens (Android/web) go via FCM HTTP v1.
     const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL || process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL || '';
 
     if (!baseUrl) {
