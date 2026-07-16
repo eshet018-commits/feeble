@@ -168,8 +168,12 @@ async function getAccessToken(): Promise<string | null> {
 
     const payload = {
       iss: serviceAccount.client_email,
-      scope:
-        "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/firebase.messaging",
+      // Use the broad "firebase" scope which covers RTDB, Messaging, and
+      // other Firebase services. The individual scopes
+      // (firebase.database + firebase.messaging) should also work, but the
+      // broad scope matches what firebase-admin uses internally and avoids
+      // edge cases where a 401 is returned despite having the right scopes.
+      scope: "https://www.googleapis.com/auth/firebase",
       aud: serviceAccount.token_uri,
       iat: now,
       exp: now + 3600,
@@ -251,8 +255,10 @@ class DataSnapshot {
 // SSE isn't available or the stream drops.
 // ---------------------------------------------------------------------------
 
-const POLL_FALLBACK_INTERVAL = 3000; // 3 seconds (only used if SSE fails)
+const POLL_FALLBACK_INTERVAL = 3000; // initial poll interval (only used if SSE fails)
 const SSE_RECONNECT_DELAY = 2000; // reconnect after 2s on stream drop
+const POLL_MAX_INTERVAL = 60000; // max backoff: 60 seconds
+const POLL_MAX_CONSECUTIVE_ERRORS = 10; // stop polling after this many consecutive errors
 
 class DatabaseRef {
   private listening = false;
@@ -260,6 +266,8 @@ class DatabaseRef {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSerialized: string | undefined;
+  private consecutiveErrors = 0;
+  private currentPollInterval = POLL_FALLBACK_INTERVAL;
 
   constructor(private path: string) {}
 
@@ -287,7 +295,8 @@ class DatabaseRef {
       cachedToken = null;
       tokenExpiry = 0;
       const errBody = await res.text().catch(() => '');
-      console.warn(`[Backend Firebase] DB 401 on ${method} ${this.path}: ${errBody.slice(0, 300)}`);
+      // Log the full URL to help diagnose wrong database URL issues.
+      console.warn(`[Backend Firebase] DB 401 on ${method} ${this.path}: ${errBody.slice(0, 300)} | URL: ${this.url().slice(0, 120)}`);
       throw new Error(`DB ${method} ${this.path}: 401 Unauthorized — ${errBody.slice(0, 200)}`);
     }
 
@@ -468,17 +477,37 @@ class DatabaseRef {
         const value = await this.restCall("GET");
         if (!this.listening) return;
 
+        // Reset error state on success.
+        this.consecutiveErrors = 0;
+        this.currentPollInterval = POLL_FALLBACK_INTERVAL;
+
         const serialized = JSON.stringify(value);
         if (serialized !== this.lastSerialized) {
           this.lastSerialized = serialized;
           callback(new DataSnapshot(value));
         }
       } catch (e) {
+        this.consecutiveErrors++;
         if (this.listening && errorCallback) errorCallback(e);
+
+        // Exponential backoff: double the interval on each consecutive error,
+        // capped at POLL_MAX_INTERVAL. Stop after too many consecutive errors.
+        if (this.consecutiveErrors >= POLL_MAX_CONSECUTIVE_ERRORS) {
+          console.error(
+            `[Backend Firebase] Giving up on ${this.path} after ${this.consecutiveErrors} consecutive errors`,
+          );
+          this.listening = false;
+          return;
+        }
+
+        this.currentPollInterval = Math.min(
+          this.currentPollInterval * 2,
+          POLL_MAX_INTERVAL,
+        );
       }
 
       if (this.listening) {
-        this.pollTimer = setTimeout(poll, POLL_FALLBACK_INTERVAL);
+        this.pollTimer = setTimeout(poll, this.currentPollInterval);
       }
     };
 
@@ -841,5 +870,32 @@ class Messaging {
 
 const database = isConfigured ? new Database() : null;
 const messaging = isConfigured ? new Messaging() : null;
+
+// One-time startup diagnostic: test DB access and log the result.
+if (isConfigured && database) {
+  (async () => {
+    try {
+      const snap = await database.ref('groups').get();
+      console.log(
+        `[Backend Firebase] Startup DB test OK — groups exists: ${snap.exists()}, count: ${snap.exists() ? Object.keys(snap.val() || {}).length : 0}`,
+      );
+    } catch (e: any) {
+      console.error(
+        `[Backend Firebase] Startup DB test FAILED: ${String(e).slice(0, 400)}`,
+      );
+      console.error(
+        `[Backend Firebase] DB URL: ${dbURL?.slice(0, 80)}... | Project: ${projId}`,
+      );
+    }
+  })();
+}
+
+// Accessor functions for diagnostics endpoints.
+export function getDbUrl(): string | null {
+  return dbURL ?? null;
+}
+export function getProjId(): string | null {
+  return projId;
+}
 
 export { database, messaging, isConfigured, isApnsToken, sendApnsPush };

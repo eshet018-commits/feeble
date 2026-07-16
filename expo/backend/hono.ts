@@ -5,7 +5,7 @@ import { cors } from "hono/cors";
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
 import { startPushService } from "./push-service";
-import { messaging, isConfigured, isApnsToken } from "./firebase";
+import { messaging, database, isConfigured, isApnsToken, getDbUrl, getProjId } from "./firebase";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -179,7 +179,7 @@ app.get("/push-diagnostics", async (c) => {
       configured: isConfigured,
       hasServiceAccount: !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
       dbURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL ? 'set' : 'not set',
-      projectId: projId,
+      projectId: getProjId(),
     },
     apns: {
       configured: !!(process.env.APNS_KEY_ID && process.env.APNS_PRIVATE_KEY),
