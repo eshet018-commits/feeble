@@ -21,6 +21,7 @@ import {
   getNotificationPermissionStatus,
   sendTestNotification,
   type PermissionStatus,
+  type TestNotificationResult,
 } from '@/utils/notifications';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider, updateEmail } from 'firebase/auth';
 import { LogOut, User, Mail, Save, Lock, Key, AtSign, Bell, BellOff, ChevronRight } from 'lucide-react-native';
@@ -224,12 +225,34 @@ export default function ProfileScreen() {
   const handleSendTestNotification = async () => {
     setTestNotifLoading(true);
     try {
-      await sendTestNotification();
-      Alert.alert('Test Notification Sent', 'If notifications are enabled for this app, you should see it shortly.');
+      const result: TestNotificationResult = await sendTestNotification(userId);
+      const lines = result.details.map((d) => `• ${d}`).join('\n');
+
+      if (result.remoteSuccess) {
+        Alert.alert(
+          'Test Notification Sent',
+          `Both local and remote notifications are working.\n\n${lines}\n\nYou should see two notifications — one now (local) and one shortly (remote, via Apple Push Notification service). Close the app to verify the remote one appears on your home screen.`,
+        );
+      } else if (result.localShown && !result.remoteAttempted) {
+        Alert.alert(
+          'Local Notification Only',
+          `The local notification works, but remote push was not attempted.\n\n${lines}`,
+        );
+      } else if (result.localShown && result.remoteAttempted && !result.remoteSuccess) {
+        Alert.alert(
+          'Local Works, Remote Failed',
+          `Local notifications work, but the remote push (needed for home-screen alerts when the app is closed) failed.\n\n${lines}\n\nRemote pushes require a valid Expo push token and a proper EAS build with APNs credentials.`,
+        );
+      } else {
+        Alert.alert(
+          'Test Notification Issues',
+          `Some parts of the notification system are not working.\n\n${lines}`,
+        );
+      }
     } catch (error) {
       Alert.alert(
         'Test Notification Failed',
-        'Make sure notification permission is granted in iOS Settings, then try again.',
+        'Make sure notification permission is granted in iOS Settings, then try again.\n\nError: ' + String(error).slice(0, 100),
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Open Settings', onPress: () => Linking.openSettings() },

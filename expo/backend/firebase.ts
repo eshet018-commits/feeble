@@ -67,8 +67,22 @@ function base64url(data: ArrayBuffer | Uint8Array): string {
 }
 
 function pemToDer(pem: string): ArrayBuffer {
-  // Strip everything except base64 characters (PEM headers, newlines, etc.)
-  const b64 = pem.replace(/[^A-Za-z0-9+/=]/g, "");
+  // Extract only the base64 content between PEM headers. The previous regex
+  // /[^A-Za-z0-9+/=]/g kept header text like "BEGINPRIVATEKEY" (all letters
+  // are valid base64 chars), corrupting the decoded key.
+  const match = pem.match(
+    /-----BEGIN[^-]*-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END[^-]*-----/,
+  );
+  let b64: string;
+  if (match) {
+    b64 = match[1].replace(/[^A-Za-z0-9+/=]/g, "");
+  } else {
+    // Fallback: strip known PEM markers then filter to base64 only.
+    b64 = pem
+      .replace(/-----BEGIN[^-]*-----/g, "")
+      .replace(/-----END[^-]*-----/g, "")
+      .replace(/[^A-Za-z0-9+/=]/g, "");
+  }
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);

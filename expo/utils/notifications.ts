@@ -382,20 +382,32 @@ export async function registerForPushNotifications(userId?: string): Promise<str
   }
 
   // Native: use the Expo Push API to get an Expo push token.
+  // The projectId is required for EAS builds and recommended for Expo Go.
+  // If it fails with the configured projectId, try without it as a fallback.
   try {
-    const ticket = await Notifications.getExpoPushTokenAsync({
-      projectId: process.env.EXPO_PUBLIC_PROJECT_ID,
-    });
+    const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
+    console.log('[Notifications] Getting Expo push token with projectId:', projectId || '(none)');
+
+    let ticket;
+    try {
+      ticket = await Notifications.getExpoPushTokenAsync(
+        projectId ? { projectId } : undefined,
+      );
+    } catch (innerErr) {
+      console.warn('[Notifications] getExpoPushTokenAsync with projectId failed, trying without:', innerErr);
+      ticket = await Notifications.getExpoPushTokenAsync();
+    }
+
     const token = ticket.data;
     await AsyncStorage.setItem(PUSH_TOKEN_KEY, token);
-    console.log('[Notifications] Expo push token obtained:', token.slice(0, 20) + '...');
+    console.log('[Notifications] Expo push token obtained:', token.slice(0, 25) + '...');
     if (userId) {
       await firebaseClient.savePushToken(userId, token);
       console.log('[Notifications] Push token saved to Firebase for user:', userId);
     }
     return token;
   } catch (error) {
-    console.warn('[Notifications] Failed to get Expo push token:', error);
+    console.warn('[Notifications] Failed to get Expo push token:', String(error).slice(0, 200));
     return null;
   }
 }
@@ -415,11 +427,40 @@ export async function unregisterPushToken(userId: string): Promise<void> {
 }
 
 /**
- * Send a local test notification immediately. On native this uses
- * expo-notifications; on web it uses the browser's Notifications API.
- * Useful for verifying that the device is correctly configured to show alerts.
+ * Result of a test notification attempt — provides diagnostic detail so the
+ * user can see exactly which part of the push chain succeeded or failed.
  */
-export async function sendTestNotification(): Promise<void> {
+export interface TestNotificationResult {
+  localShown: boolean;
+  remoteAttempted: boolean;
+  remoteSuccess: boolean;
+  remoteError?: string;
+  pushToken?: string;
+  details: string[];
+}
+
+/**
+ * Send a test notification. On native this does TWO things:
+ *
+ * 1. Fires a LOCAL notification immediately (verifies permissions + display).
+ * 2. Sends a REMOTE push via the Expo Push API to the user's own Expo push
+ *    token (verifies the full remote delivery chain: Expo Push API → APNs →
+ *    home screen / lock screen). This is the path that must work for
+ *    notifications to appear when the app is closed.
+ *
+ * Returns a detailed result object so the UI can show the user exactly what
+ * worked and what didn't.
+ */
+export async function sendTestNotification(
+  userId?: string,
+): Promise<TestNotificationResult> {
+  const details: string[] = [];
+  let localShown = false;
+  let remoteAttempted = false;
+  let remoteSuccess = false;
+  let remoteError: string | undefined;
+  let pushToken: string | undefined;
+
   if (Platform.OS === 'web') {
     const shown = showWebNotification(
       'Test Notification',
@@ -429,9 +470,15 @@ export async function sendTestNotification(): Promise<void> {
     if (!shown) {
       throw new Error('Web notification permission not granted');
     }
-    return;
+    return {
+      localShown: true,
+      remoteAttempted: false,
+      remoteSuccess: false,
+      details: ['Local web notification shown.'],
+    };
   }
 
+  // --- Step 1: Local notification (verifies permissions) ---
   try {
     const { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') {
@@ -439,17 +486,87 @@ export async function sendTestNotification(): Promise<void> {
     }
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: 'Test Notification',
-        body: 'This is what your notifications will look like.',
+        title: 'Test Notification (Local)',
+        body: 'This verifies local notifications work while the app is open.',
         data: { kind: 'default' },
         sound: true,
       },
       trigger: null,
     });
+    localShown = true;
+    details.push('Local notification displayed (works while app is open).');
   } catch (error) {
-    console.warn('[Notifications] Test notification failed:', error);
-    throw error;
+    console.warn('[Notifications] Local test notification failed:', error);
+    details.push(`Local notification FAILED: ${String(error).slice(0, 100)}`);
+    // Continue to remote test even if local failed
   }
+
+  // --- Step 2: Remote push via Expo Push API (verifies home-screen delivery) ---
+  try {
+    // Get the user's Expo push token from cache or register a new one.
+    let token = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
+    if (!token) {
+      details.push('No cached push token — attempting to register...');
+      token = await registerForPushNotifications(userId);
+    }
+
+    if (!token) {
+      remoteError = 'No Expo push token available. Push notifications cannot be delivered when the app is closed.';
+      details.push(remoteError);
+      details.push('This usually means the push token registration failed. Check that the app is built with a valid Expo project ID.');
+      return { localShown, remoteAttempted: true, remoteSuccess: false, remoteError, details };
+    }
+
+    pushToken = token.slice(0, 25) + '...';
+    details.push(`Push token found: ${pushToken}`);
+    remoteAttempted = true;
+
+    // Send a remote push to our own device via the Expo Push API.
+    // This tests the full chain: Expo Push API → APNs → home screen.
+    const res = await fetch(EXPO_PUSH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify([{
+        to: token,
+        title: 'Test Notification (Remote)',
+        body: 'This verifies remote push works — you should see this even when the app is closed.',
+        data: { kind: 'default', test: true },
+        sound: true,
+        priority: 'high',
+      }]),
+    });
+
+    const json = (await res.json()) as any;
+
+    if (json?.errors) {
+      remoteError = `Expo Push API errors: ${JSON.stringify(json.errors).slice(0, 200)}`;
+      details.push(remoteError);
+      console.warn('[Notifications] Remote test push API errors:', json.errors);
+    } else if (Array.isArray(json?.data)) {
+      for (const ticket of json.data) {
+        if (ticket?.status === 'error') {
+          remoteError = `Push ticket error: ${ticket.message} — ${JSON.stringify(ticket.details).slice(0, 200)}`;
+          details.push(remoteError);
+          console.warn('[Notifications] Remote test push ticket error:', ticket.message, ticket.details);
+        } else {
+          remoteSuccess = true;
+          details.push('Remote push accepted by Expo Push API. It should appear on your home screen shortly.');
+        }
+      }
+    } else {
+      remoteError = `Unexpected Expo Push API response: ${JSON.stringify(json).slice(0, 200)}`;
+      details.push(remoteError);
+    }
+  } catch (error) {
+    remoteError = `Remote push failed: ${String(error).slice(0, 150)}`;
+    details.push(remoteError);
+    console.warn('[Notifications] Remote test push failed:', error);
+  }
+
+  return { localShown, remoteAttempted, remoteSuccess, remoteError, pushToken, details };
 }
 
 // ---------------------------------------------------------------------------
@@ -606,12 +723,17 @@ export async function pushToGroupMembers(params: {
   sound?: boolean;
 }): Promise<void> {
   try {
+    console.log('[Push] pushToGroupMembers: looking up tokens for group', params.groupId, 'excluding', params.excludeUserId);
     const tokensById = await firebaseClient.getGroupMemberPushTokens(
       params.groupId,
       params.excludeUserId,
     );
     const tokens = Object.values(tokensById);
-    if (tokens.length === 0) return;
+    console.log('[Push] pushToGroupMembers: found', tokens.length, 'token(s)', tokens.map(t => t.slice(0, 20) + '...'));
+    if (tokens.length === 0) {
+      console.log('[Push] pushToGroupMembers: no tokens found — no recipients have registered for push. They need to open the app and grant notification permission at least once.');
+      return;
+    }
     await sendRemotePushes(tokens, {
       title: params.title,
       body: params.body,
@@ -619,7 +741,7 @@ export async function pushToGroupMembers(params: {
       sound: params.sound,
     });
   } catch (error) {
-    console.warn('[Notifications] pushToGroupMembers failed:', error);
+    console.warn('[Push] pushToGroupMembers failed:', error);
   }
 }
 
@@ -638,12 +760,17 @@ export async function pushChatMessageToGroupMembers(params: {
   sound?: boolean;
 }): Promise<void> {
   try {
+    console.log('[Push] pushChatMessage: looking up tokens for group', params.groupId, 'chat', params.chatId);
     const tokensById = await firebaseClient.getGroupMemberPushTokens(
       params.groupId,
       params.excludeUserId,
     );
     const userIds = Object.keys(tokensById);
-    if (userIds.length === 0) return;
+    console.log('[Push] pushChatMessage: found', userIds.length, 'recipient(s) with tokens');
+    if (userIds.length === 0) {
+      console.log('[Push] pushChatMessage: no recipients have push tokens — skipping');
+      return;
+    }
 
     // Filter out members who have muted this chat.
     const enabledTokens: string[] = [];
@@ -653,6 +780,8 @@ export async function pushChatMessageToGroupMembers(params: {
           const muted = await firebaseClient.isChatMuted(uid, params.chatId);
           if (!muted) {
             enabledTokens.push(tokensById[uid]);
+          } else {
+            console.log('[Push] pushChatMessage: user', uid, 'has muted this chat');
           }
         } catch {
           // If we can't check, include the token (default to sending).
@@ -661,6 +790,7 @@ export async function pushChatMessageToGroupMembers(params: {
       }),
     );
 
+    console.log('[Push] pushChatMessage: sending to', enabledTokens.length, 'token(s) after mute filter');
     if (enabledTokens.length === 0) return;
     await sendRemotePushes(enabledTokens, {
       title: params.title,
@@ -669,7 +799,7 @@ export async function pushChatMessageToGroupMembers(params: {
       sound: params.sound,
     });
   } catch (error) {
-    console.warn('[Notifications] pushChatMessageToGroupMembers failed:', error);
+    console.warn('[Push] pushChatMessageToGroupMembers failed:', error);
   }
 }
 
