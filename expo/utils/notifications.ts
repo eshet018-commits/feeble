@@ -550,13 +550,19 @@ export async function sendTestNotification(
           remoteSuccess = true;
           details.push('Remote push accepted by backend. It should appear on your home screen shortly.');
         } else if (json?.error) {
-          remoteError = `Backend push error: ${String(json.error).slice(0, 200)}`;
+          remoteError = `Backend push error: ${String(json.error).slice(0, 300)}`;
           details.push(remoteError);
+          if (String(json.error).includes('APNS') || String(json.error).includes('not configured')) {
+            details.push('The backend needs APNS_KEY_ID, APNS_TEAM_ID, and APNS_PRIVATE_KEY environment variables to send iOS push notifications directly via APNs.');
+          }
         } else if (json?.errors) {
-          remoteError = `Push errors: ${JSON.stringify(json.errors).slice(0, 200)}`;
+          remoteError = `Push errors: ${JSON.stringify(json.errors).slice(0, 300)}`;
+          details.push(remoteError);
+        } else if (json?.warnings) {
+          remoteError = `Push sent with warnings: ${JSON.stringify(json.warnings).slice(0, 300)}`;
           details.push(remoteError);
         } else {
-          remoteError = `Unexpected backend response: ${JSON.stringify(json).slice(0, 200)}`;
+          remoteError = `Unexpected backend response: ${JSON.stringify(json).slice(0, 300)}`;
           details.push(remoteError);
         }
       } catch (fetchErr) {
@@ -630,9 +636,9 @@ export async function sendRemotePushes(
     // All platforms route through the backend /api/push endpoint.
     // The backend handles:
     //   - FCM tokens (web, Android) → FCM HTTP v1 API
-    //   - APNs tokens (iOS) → Instance ID batchImport → FCM HTTP v1 API
+    //   - APNs tokens (iOS) → direct APNs HTTP/2 API using .p8 key
     //   - Expo tokens (legacy) → Expo Push API (fallback)
-    // This bypasses the need for EAS/APNs credentials with Expo.
+    // This bypasses the need for EAS or batchImport.
     const candidateUrls = [
       process.env.EXPO_PUBLIC_RORK_API_BASE_URL,
       process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL,
@@ -664,11 +670,13 @@ export async function sendRemotePushes(
           });
           if (!res.ok) continue; // try next URL
           const json = (await res.json()) as any;
-          if (json?.sent) {
+          if (json?.sent && json.sent > 0) {
             console.log(`[Notifications] Push proxy: ${json.sent} delivered (${batch.length} tokens)`);
+            delivered = true;
+          } else if (json?.error) {
+            console.warn(`[Notifications] Push proxy error: ${String(json.error).slice(0, 200)}`);
           }
-          delivered = true;
-          break; // success — no need to try other URLs
+          break; // got a response — no need to try other URLs
         } catch {
           // try next URL
         }

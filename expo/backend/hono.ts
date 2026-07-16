@@ -15,8 +15,9 @@ app.use("*", cors());
 
 /**
  * REST push endpoint — forwards push notifications to the appropriate service:
- *   - FCM tokens (web) via Firebase Admin SDK messaging
- *   - Expo push tokens (native) via the Expo Push API
+ *   - FCM tokens (web) via FCM HTTP v1 API
+ *   - APNs tokens (iOS) via direct APNs HTTP/2 API using .p8 key
+ *   - Expo push tokens (legacy) via the Expo Push API
  *
  * The Expo Push API and FCM API don't send CORS headers, so browsers can't
  * POST to them directly. This endpoint forwards the request server-side.
@@ -33,8 +34,8 @@ app.post("/push", async (c) => {
 
     const isExpoToken = (t: string) => t.startsWith("ExponentPushToken");
     // Expo tokens go to the Expo Push API; everything else (FCM tokens AND
-    // raw APNs tokens) goes through FCM messaging, which auto-converts
-    // APNs tokens via Instance ID batchImport.
+    // raw APNs tokens) goes through the backend messaging class, which sends
+    // APNs tokens directly via APNs HTTP/2 and FCM tokens via FCM HTTP v1.
     const expoMessages = messages.filter((m: any) => isExpoToken(m.to));
     const fcmOrApnsMessages = messages.filter((m: any) => !isExpoToken(m.to));
 
@@ -45,8 +46,11 @@ app.post("/push", async (c) => {
     }
 
     let sent = 0;
+    const errors: string[] = [];
 
-    // Send FCM/APNs pushes via backend messaging (handles APNs→FCM conversion).
+    // Send FCM/APNs pushes via backend messaging.
+    // The Messaging class routes APNs tokens through direct APNs HTTP/2 API
+    // (using .p8 key) and FCM tokens through FCM HTTP v1 API.
     if (fcmOrApnsMessages.length > 0 && messaging) {
       const tokens = fcmOrApnsMessages.map((m: any) => m.to);
       const batchChunks: string[][] = [];
@@ -74,11 +78,15 @@ app.post("/push", async (c) => {
           });
           for (const r of response.responses) {
             if (r.success) sent++;
+            else if (r.error) errors.push(String(r.error).slice(0, 200));
           }
         } catch (error) {
-          console.warn("[PushEndpoint] FCM send failed:", error);
+          console.warn("[PushEndpoint] Messaging send failed:", error);
+          errors.push(String(error).slice(0, 200));
         }
       }
+    } else if (fcmOrApnsMessages.length > 0 && !messaging) {
+      errors.push("Backend messaging not configured");
     }
 
     // Send Expo pushes via Expo Push API.
@@ -109,7 +117,10 @@ app.post("/push", async (c) => {
       }
     }
 
-    return c.json({ success: true, sent });
+    if (sent === 0 && errors.length > 0) {
+      return c.json({ success: false, sent: 0, error: errors.join("; ") });
+    }
+    return c.json({ success: true, sent, ...(errors.length > 0 ? { warnings: errors } : {}) });
   } catch (error) {
     console.warn("[PushEndpoint] Failed:", error);
     return c.json({ success: false, sent: 0, error: String(error) }, 500);

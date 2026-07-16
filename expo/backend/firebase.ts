@@ -11,7 +11,8 @@
  *   2. Exchanging it at Google's token endpoint for an access token
  *
  * Database operations use the Firebase Realtime Database REST API.
- * Push notifications use the FCM HTTP v1 API.
+ * Push notifications use the FCM HTTP v1 API (for web/FCM tokens) and
+ * direct APNs sending (for iOS device tokens, using the .p8 key).
  * Both bypass google-auth-library entirely.
  */
 
@@ -23,14 +24,18 @@ interface ServiceAccount {
   private_key_id?: string;
 }
 
-// Cache of APNs token → FCM registration token conversions.
-// The Instance ID batchImport API converts raw APNs tokens to FCM tokens.
-const apnsToFcmCache = new Map<string, string>();
-
 let serviceAccount: ServiceAccount | null = null;
 let dbURL: string | null | undefined = null;
 let projId: string | null = null;
 let isConfigured = false;
+
+// APNs direct-sending configuration (bypasses FCM for iOS tokens).
+let apnsKeyId: string | null = null;
+let apnsTeamId: string | null = null;
+let apnsPrivateKeyPem: string | null = null;
+let apnsBundleId: string | null = null;
+let apnsSandbox = true; // development builds use sandbox
+let apnsConfigured = false;
 
 try {
   const rawKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
@@ -50,6 +55,24 @@ try {
   } else {
     console.warn(
       "[Backend Firebase] Missing FIREBASE_SERVICE_ACCOUNT_KEY or database URL — push service disabled",
+    );
+  }
+
+  // Load APNs direct-sending credentials.
+  apnsKeyId = process.env.APNS_KEY_ID || null;
+  apnsTeamId = process.env.APNS_TEAM_ID || process.env.EXPO_PUBLIC_TEAM_ID || null;
+  apnsPrivateKeyPem = process.env.APNS_PRIVATE_KEY || null;
+  apnsBundleId = process.env.APNS_BUNDLE_ID || "app.rork.feeble";
+  apnsSandbox = (process.env.APNS_SANDBOX || "true") !== "false";
+
+  if (apnsKeyId && apnsTeamId && apnsPrivateKeyPem) {
+    apnsConfigured = true;
+    console.log(
+      `[Backend APNs] Direct APNs sending configured: team=${apnsTeamId}, key=${apnsKeyId}, bundle=${apnsBundleId}, sandbox=${apnsSandbox}`,
+    );
+  } else {
+    console.warn(
+      "[Backend APNs] Direct APNs NOT configured — set APNS_KEY_ID, APNS_TEAM_ID (or EXPO_PUBLIC_TEAM_ID), and APNS_PRIVATE_KEY env vars to enable iOS push",
     );
   }
 } catch (e) {
@@ -91,6 +114,41 @@ function pemToDer(pem: string): ArrayBuffer {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes.buffer;
+}
+
+/**
+ * Convert a DER-encoded ECDSA signature (ASN.1 SEQUENCE of two INTEGERs)
+ * to the raw R||S format expected by JWT (ES256). Web Crypto API produces
+ * DER-encoded signatures, but JWT requires raw concatenation.
+ */
+function derToRawSignature(derSig: ArrayBuffer): ArrayBuffer {
+  const der = new Uint8Array(derSig);
+  // Minimal ASN.1 parser for ECDSA signature: SEQUENCE { r INTEGER, s INTEGER }
+  let offset = 0;
+  if (der[offset++] !== 0x30) throw new Error("Invalid DER: expected SEQUENCE");
+  // Read SEQUENCE length (simplified — handles short form only)
+  const seqLen = der[offset++];
+  // r
+  if (der[offset++] !== 0x02) throw new Error("Invalid DER: expected INTEGER for r");
+  const rLen = der[offset++];
+  const rBytes = der.slice(offset, offset + rLen);
+  offset += rLen;
+  // s
+  if (der[offset++] !== 0x02) throw new Error("Invalid DER: expected INTEGER for s");
+  const sLen = der[offset++];
+  const sBytes = der.slice(offset, offset + sLen);
+
+  // Each value must be exactly 32 bytes, zero-padded on the left.
+  const raw = new Uint8Array(64);
+  // Copy r (strip leading zero padding byte if present, then right-align)
+  const rStart = rBytes.length > 32 ? rBytes.length - 32 : 0;
+  const rSrc = rBytes.slice(rStart);
+  raw.set(rSrc, 32 - rSrc.length);
+  // Copy s
+  const sStart = sBytes.length > 32 ? sBytes.length - 32 : 0;
+  const sSrc = sBytes.slice(sStart);
+  raw.set(sSrc, 32 + (32 - sSrc.length));
+  return raw.buffer;
 }
 
 async function getAccessToken(): Promise<string | null> {
@@ -444,60 +502,203 @@ class Database {
 }
 
 // ---------------------------------------------------------------------------
-// APNs token → FCM registration token conversion
+// Direct APNs sending (bypasses FCM entirely for iOS tokens)
 //
 // On iOS, getDevicePushTokenAsync() returns a raw APNs token (hex string).
-// FCM can't send directly to APNs tokens — they must first be converted to
-// FCM registration tokens via the Instance ID batchImport API:
-//   POST https://iid.googleapis.com/iid/v1:batchImport
+// Instead of converting these to FCM tokens via the deprecated Instance ID
+// batchImport API, we send pushes directly to APNs using the HTTP/2 API
+// with a .p8 provider JWT for authentication.
 //
-// This requires an OAuth2 access token (same one we already mint for DB/FCM).
-// The response contains a valid FCM registration token we can use with the
-// FCM HTTP v1 API to deliver push notifications to iOS devices.
+// This requires three env vars:
+//   APNS_KEY_ID     — the Key ID from your Apple Developer .p8 key
+//   APNS_TEAM_ID    — your Apple Developer Team ID (or EXPO_PUBLIC_TEAM_ID)
+//   APNS_PRIVATE_KEY — the full PEM contents of the .p8 file
+//
+// Optional:
+//   APNS_BUNDLE_ID  — defaults to "app.rork.feeble"
+//   APNS_SANDBOX    — "true" (default) for dev, "false" for production
 // ---------------------------------------------------------------------------
 
-async function convertApnsTokenToFcm(apnsToken: string): Promise<string | null> {
-  // Return cached conversion if available.
-  const cached = apnsToFcmCache.get(apnsToken);
-  if (cached) return cached;
+// Cache of APNs provider JWT tokens (valid for 30 minutes).
+let apnsJwtCache: string | null = null;
+let apnsJwtExpiry = 0;
 
-  if (!serviceAccount) return null;
-  const token = await getAccessToken();
-  if (!token) return null;
+/**
+ * Mint a provider JWT token for APNs HTTP/2 API.
+ * This signs a JWT with the .p8 private key (ES256 algorithm).
+ * The JWT authenticates us to send pushes directly via APNs.
+ */
+async function getApnsProviderToken(): Promise<string | null> {
+  if (!apnsConfigured || !apnsKeyId || !apnsTeamId || !apnsPrivateKeyPem) {
+    return null;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (apnsJwtCache && apnsJwtExpiry > now + 60) {
+    return apnsJwtCache;
+  }
 
   try {
-    const res = await fetch('https://iid.googleapis.com/iid/v1:batchImport', {
+    const header = { alg: 'ES256', kid: apnsKeyId, typ: 'JWT' };
+    const payload = {
+      iss: apnsTeamId,
+      iat: now,
+    };
+
+    const headerB64 = base64url(new TextEncoder().encode(JSON.stringify(header)));
+    const payloadB64 = base64url(new TextEncoder().encode(JSON.stringify(payload)));
+    const unsigned = `${headerB64}.${payloadB64}`;
+
+    const keyData = pemToDer(apnsPrivateKeyPem);
+    const cryptoKey = await crypto.subtle.importKey(
+      'pkcs8',
+      keyData,
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['sign'],
+    );
+
+    const derSignature = await crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      cryptoKey,
+      new TextEncoder().encode(unsigned),
+    );
+
+    // Web Crypto produces DER-encoded ECDSA signatures, but JWT needs raw R||S.
+    const rawSignature = derToRawSignature(derSignature);
+    const jwt = `${unsigned}.${base64url(rawSignature)}`;
+
+    apnsJwtCache = jwt;
+    apnsJwtExpiry = now + 30 * 60; // 30 minutes
+    return jwt;
+  } catch (e) {
+    console.warn('[Backend APNs] Failed to mint provider JWT:', e);
+    return null;
+  }
+}
+
+/**
+ * Send a push notification directly to an APNs token (iOS device).
+ * Uses the APNs HTTP/2 API with a .p8 provider JWT for authentication.
+ * This bypasses FCM entirely — no batchImport, no FCM conversion needed.
+ *
+ * Returns true if the push was accepted by APNs, false otherwise.
+ */
+async function sendApnsPush(params: {
+  token: string;
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+  priority?: string;
+}): Promise<boolean> {
+  const { token, title, body, data, priority } = params;
+
+  const jwt = await getApnsProviderToken();
+  if (!jwt) {
+    console.warn('[Backend APNs] No provider JWT available — cannot send direct APNs push');
+    return false;
+  }
+
+  const host = apnsSandbox
+    ? 'https://api.sandbox.push.apple.com'
+    : 'https://api.push.apple.com';
+  const url = `${host}/3/device/${token}`;
+
+  const apsPayload: Record<string, any> = {
+    alert: { title, body },
+    sound: 'default',
+    badge: 1,
+  };
+
+  const payload: Record<string, any> = {
+    aps: apsPayload,
+  };
+
+  // Merge custom data at the top level (APNs allows arbitrary keys alongside 'aps').
+  if (data) {
+    for (const [k, v] of Object.entries(data)) {
+      if (k !== 'aps') payload[k] = v;
+    }
+  }
+
+  try {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        'apns-authorization': `bearer ${jwt}`,
+        'apns-push-type': 'alert',
+        'apns-priority': priority === 'high' ? '10' : '5',
+        'apns-topic': apnsBundleId!,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        application: projId || serviceAccount.project_id,
-        sandbox: false,
-        apns_tokens: [apnsToken],
-      }),
+      body: JSON.stringify(payload),
     });
 
-    if (!res.ok) {
-      const text = await res.text();
-      console.warn(`[Backend Firebase] batchImport failed: ${res.status} ${text.slice(0, 200)}`);
-      return null;
-    }
-
-    const data = (await res.json()) as { results?: Array<{ apns_token: string; status: string; registration_token?: string }> };
-    const result = data?.results?.[0];
-    if (result?.status === 'OK' && result.registration_token) {
-      console.log(`[Backend Firebase] APNs→FCM conversion succeeded: ${apnsToken.slice(0, 12)}... → ${result.registration_token.slice(0, 20)}...`);
-      apnsToFcmCache.set(apnsToken, result.registration_token);
-      return result.registration_token;
+    if (res.ok) {
+      console.log(`[Backend APNs] Push accepted for token ${token.slice(0, 12)}... (${apnsSandbox ? 'sandbox' : 'production'})`);
+      return true;
     } else {
-      console.warn(`[Backend Firebase] APNs→FCM conversion failed for token ${apnsToken.slice(0, 12)}...: status=${result?.status}`);
-      return null;
+      const text = await res.text();
+      console.warn(`[Backend APNs] Push rejected: ${res.status} ${text.slice(0, 300)}`);
+
+      // If we get a 403 withExpiredProviderToken, refresh the JWT and retry once.
+      if (res.status === 403 && text.includes('ExpiredProviderToken')) {
+        apnsJwtCache = null;
+        apnsJwtExpiry = 0;
+        const newJwt = await getApnsProviderToken();
+        if (newJwt) {
+          const retryRes = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'apns-authorization': `bearer ${newJwt}`,
+              'apns-push-type': 'alert',
+              'apns-priority': priority === 'high' ? '10' : '5',
+              'apns-topic': apnsBundleId!,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          });
+          if (retryRes.ok) {
+            console.log(`[Backend APNs] Retry succeeded for token ${token.slice(0, 12)}...`);
+            return true;
+          } else {
+            const retryText = await retryRes.text();
+            console.warn(`[Backend APNs] Retry also failed: ${retryRes.status} ${retryText.slice(0, 200)}`);
+          }
+        }
+      }
+
+      // If sandbox fails with DeviceTokenNotForTopic, try production and vice versa.
+      if (res.status === 400 && text.includes('DeviceTokenNotForTopic')) {
+        const altHost = apnsSandbox
+          ? 'https://api.push.apple.com'
+          : 'https://api.sandbox.push.apple.com';
+        console.warn(`[Backend APNs] Token mismatch — trying ${apnsSandbox ? 'production' : 'sandbox'} APNs...`);
+        const altRes = await fetch(`${altHost}/3/device/${token}`, {
+          method: 'POST',
+          headers: {
+            'apns-authorization': `bearer ${jwt}`,
+            'apns-push-type': 'alert',
+            'apns-priority': priority === 'high' ? '10' : '5',
+            'apns-topic': apnsBundleId!,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+        if (altRes.ok) {
+          console.log(`[Backend APNs] Alternate APNs endpoint accepted push for ${token.slice(0, 12)}...`);
+          return true;
+        } else {
+          const altText = await altRes.text();
+          console.warn(`[Backend APNs] Alternate endpoint also rejected: ${altRes.status} ${altText.slice(0, 200)}`);
+        }
+      }
+
+      return false;
     }
   } catch (e) {
-    console.warn('[Backend Firebase] APNs→FCM conversion error:', e);
-    return null;
+    console.warn(`[Backend APNs] Send error for token ${token.slice(0, 12)}...:`, e);
+    return false;
   }
 }
 
@@ -537,7 +738,6 @@ class Messaging {
     if (!accessToken) throw new Error("No access token available");
 
     // Merge notification title/body into data for data-only web push.
-    // The service worker extracts title/body from payload.data.
     const fullData: Record<string, string> = {
       title: params.notification.title,
       body: params.notification.body,
@@ -546,75 +746,83 @@ class Messaging {
 
     const responses: Array<{ success: boolean; error?: any }> = [];
 
-    // Process each token — convert APNs tokens to FCM first.
+    // Separate tokens by type: APNs tokens go via direct APNs, FCM tokens via FCM API.
+    const apnsTokens: string[] = [];
     const fcmTokens: string[] = [];
+
     for (const tok of params.tokens) {
       if (isApnsToken(tok)) {
-        const fcmToken = await convertApnsTokenToFcm(tok);
-        if (fcmToken) {
-          fcmTokens.push(fcmToken);
-        } else {
-          responses.push({ success: false, error: new Error(`APNs→FCM conversion failed for ${tok.slice(0, 12)}...`) });
-        }
+        apnsTokens.push(tok);
       } else {
         fcmTokens.push(tok);
       }
     }
 
-    await Promise.all(
-      fcmTokens.map(async (tok) => {
-        try {
-          const message: Record<string, any> = {
-            token: tok,
-            data: fullData,
-            android: { priority: params.android?.priority || "high" },
-            apns: {
-              headers: {
-                'apns-priority': '10',
-                'apns-push-type': 'alert',
-              },
-              payload: {
-                aps: {
-                  alert: {
-                    title: params.notification.title,
-                    body: params.notification.body,
-                  },
-                  sound: 'default',
-                  'content-available': 1,
+    // Send APNs tokens directly via APNs HTTP/2 API (no FCM conversion needed).
+    if (apnsTokens.length > 0) {
+      if (apnsConfigured) {
+        console.log(`[Backend Messaging] Sending ${apnsTokens.length} push(es) via direct APNs`);
+        await Promise.all(
+          apnsTokens.map(async (tok) => {
+            const success = await sendApnsPush({
+              token: tok,
+              title: params.notification.title,
+              body: params.notification.body,
+              data: fullData,
+              priority: params.android?.priority || 'high',
+            });
+            responses.push({ success, error: success ? undefined : new Error(`APNs push failed for ${tok.slice(0, 12)}...`) });
+          }),
+        );
+      } else {
+        console.warn(`[Backend Messaging] ${apnsTokens.length} APNs token(s) but direct APNs not configured — set APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY env vars`);
+        for (const tok of apnsTokens) {
+          responses.push({ success: false, error: new Error('Direct APNs not configured — set APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY') });
+        }
+      }
+    }
+
+    // Send FCM tokens via FCM HTTP v1 API.
+    if (fcmTokens.length > 0) {
+      await Promise.all(
+        fcmTokens.map(async (tok) => {
+          try {
+            const message: Record<string, any> = {
+              token: tok,
+              data: fullData,
+              android: { priority: params.android?.priority || "high" },
+              webpush: {
+                headers: {
+                  Urgency: "high",
+                  TTL: "86400",
                 },
               },
-            },
-            webpush: {
-              headers: {
-                Urgency: "high",
-                TTL: "86400",
-              },
-            },
-          };
+            };
 
-          const res = await fetch(
-            `https://fcm.googleapis.com/v1/projects/${projId}/messages:send`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
+            const res = await fetch(
+              `https://fcm.googleapis.com/v1/projects/${projId}/messages:send`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ message }),
               },
-              body: JSON.stringify({ message }),
-            },
-          );
+            );
 
-          if (res.ok) {
-            responses.push({ success: true });
-          } else {
-            const text = await res.text();
-            responses.push({ success: false, error: new Error(text) });
+            if (res.ok) {
+              responses.push({ success: true });
+            } else {
+              const text = await res.text();
+              responses.push({ success: false, error: new Error(text) });
+            }
+          } catch (e) {
+            responses.push({ success: false, error: e });
           }
-        } catch (e) {
-          responses.push({ success: false, error: e });
-        }
-      }),
-    );
+        }),
+      );
+    }
 
     return { responses };
   }
@@ -627,4 +835,4 @@ class Messaging {
 const database = isConfigured ? new Database() : null;
 const messaging = isConfigured ? new Messaging() : null;
 
-export { database, messaging, isConfigured, isApnsToken, convertApnsTokenToFcm };
+export { database, messaging, isConfigured, isApnsToken, sendApnsPush };

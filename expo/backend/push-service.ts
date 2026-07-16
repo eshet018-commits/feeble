@@ -7,8 +7,9 @@ import { database, messaging, isConfigured, isApnsToken } from './firebase';
  * PERMISSION_DENIED errors. Listens to the Realtime Database for new chat
  * messages, announcements, and events. When new content is created, it sends
  * real push notifications:
- *   - FCM tokens (web) via admin.messaging().sendEachForMulticast()
- *   - Expo push tokens (native iOS/Android) via the Expo Push API
+ *   - FCM tokens (web) via FCM HTTP v1 API
+ *   - APNs tokens (iOS) via direct APNs HTTP/2 API using .p8 key
+ *   - Expo push tokens (legacy) via the Expo Push API
  *
  * These are delivered to the device's home screen / lock screen even when the
  * app is fully closed or backgrounded.
@@ -208,8 +209,9 @@ async function sendPushNotifications(
   if (tokens.length === 0) return;
 
   // Categorize tokens: Expo tokens go to Expo Push API, everything else
-  // (FCM tokens AND raw APNs tokens) goes to FCM via the backend messaging
-  // class, which auto-converts APNs tokens via Instance ID batchImport.
+  // (FCM tokens AND raw APNs tokens) goes to the backend messaging class,
+  // which sends APNs tokens directly via APNs HTTP/2 API and FCM tokens via
+  // FCM HTTP v1 API.
   const expoTokens = tokens.filter((t) => isExpoPushToken(t));
   const fcmOrApnsTokens = tokens.filter((t) => !isExpoPushToken(t));
 
@@ -217,7 +219,7 @@ async function sendPushNotifications(
   const fcmCount = fcmOrApnsTokens.length - apnsCount;
   console.log(`[PushService] Token breakdown: ${fcmCount} FCM, ${apnsCount} APNs, ${expoTokens.length} Expo`);
 
-  // Send FCM/APNs pushes via backend messaging (handles APNs→FCM conversion).
+  // Send FCM/APNs pushes via backend messaging (direct APNs + FCM HTTP v1).
   if (fcmOrApnsTokens.length > 0 && messaging) {
     try {
       // sendEachForMulticast handles batches internally (up to 500 per call).
