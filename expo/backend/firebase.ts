@@ -51,10 +51,13 @@ try {
     console.log(
       "[Backend Firebase] REST API mode configured for project:",
       projId,
+      "dbURL:",
+      dbURL,
     );
   } else {
     console.warn(
       "[Backend Firebase] Missing FIREBASE_SERVICE_ACCOUNT_KEY or database URL — push service disabled",
+      "hasKey:", !!rawKey, "hasDbURL:", !!dbURL,
     );
   }
 
@@ -72,7 +75,7 @@ try {
     );
   } else {
     console.warn(
-      "[Backend APNs] Direct APNs NOT configured — set APNS_KEY_ID, APNS_TEAM_ID (or EXPO_PUBLIC_TEAM_ID), and APNS_PRIVATE_KEY env vars to enable iOS push",
+      "[Backend APNs] Direct APNs NOT configured — hasKeyId:", !!apnsKeyId, "hasTeamId:", !!apnsTeamId, "hasPrivateKey:", !!apnsPrivateKeyPem,
     );
   }
 } catch (e) {
@@ -261,7 +264,9 @@ class DatabaseRef {
   constructor(private path: string) {}
 
   private url(): string {
-    return `${dbURL}/${this.path}.json`;
+    // Sanitize: strip trailing slashes from dbURL to avoid double-slash URLs.
+    const base = (dbURL || '').replace(/\/+$/, '');
+    return `${base}/${this.path}.json`;
   }
 
   private async restCall(method: string, body?: any): Promise<any> {
@@ -281,7 +286,9 @@ class DatabaseRef {
       // Token might be invalid — clear cache so next call re-mints.
       cachedToken = null;
       tokenExpiry = 0;
-      throw new Error(`DB ${method} ${this.path}: 401 Unauthorized`);
+      const errBody = await res.text().catch(() => '');
+      console.warn(`[Backend Firebase] DB 401 on ${method} ${this.path}: ${errBody.slice(0, 300)}`);
+      throw new Error(`DB ${method} ${this.path}: 401 Unauthorized — ${errBody.slice(0, 200)}`);
     }
 
     if (!res.ok) {

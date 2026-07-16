@@ -105,10 +105,19 @@ app.post("/push", async (c) => {
           const json = (await res.json()) as any;
           if (json?.errors) {
             console.warn("[PushEndpoint] Expo Push API errors:", json.errors);
+            for (const e of json.errors) {
+              errors.push(`Expo Push API: ${typeof e === 'string' ? e : JSON.stringify(e).slice(0, 200)}`);
+            }
           }
           if (Array.isArray(json?.data)) {
             for (const ticket of json.data) {
-              if (ticket?.status !== "error") sent++;
+              if (ticket?.status === "error") {
+                const ticketErr = ticket.message || ticket.details || 'Unknown Expo push ticket error';
+                console.warn("[PushEndpoint] Push ticket error:", ticketErr);
+                errors.push(`Expo ticket: ${String(ticketErr).slice(0, 200)}`);
+              } else {
+                sent++;
+              }
             }
           }
         } catch (error) {
@@ -151,7 +160,57 @@ app.use(
 startPushService();
 
 app.get("/", (c) => {
-  return c.json({ status: "ok", message: "API is running", pushService: isConfigured });
+  return c.json({
+    status: "ok",
+    message: "API is running",
+    pushService: isConfigured,
+    dbConfigured: isConfigured,
+    apnsConfigured: !!(process.env.APNS_KEY_ID && process.env.APNS_PRIVATE_KEY),
+    hasServiceAccount: !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
+    dbURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL ? 'set' : 'not set',
+  });
+});
+
+/** Diagnostic endpoint — tests DB access and APNs config in one call. */
+app.get("/push-diagnostics", async (c) => {
+  const result: Record<string, any> = {
+    timestamp: new Date().toISOString(),
+    firebase: {
+      configured: isConfigured,
+      hasServiceAccount: !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
+      dbURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL ? 'set' : 'not set',
+      projectId: projId,
+    },
+    apns: {
+      configured: !!(process.env.APNS_KEY_ID && process.env.APNS_PRIVATE_KEY),
+      hasKeyId: !!process.env.APNS_KEY_ID,
+      hasPrivateKey: !!process.env.APNS_PRIVATE_KEY,
+      teamId: process.env.EXPO_PUBLIC_TEAM_ID ? 'set' : 'not set',
+      bundleId: process.env.APNS_BUNDLE_ID || 'app.rork.feeble',
+      sandbox: (process.env.APNS_SANDBOX || 'true') !== 'false',
+    },
+  };
+
+  // Test DB read
+  if (database) {
+    try {
+      const snap = await database.ref('groups').get();
+      result.dbTest = {
+        success: true,
+        exists: snap.exists(),
+        childCount: snap.exists() ? Object.keys(snap.val() || {}).length : 0,
+      };
+    } catch (error: any) {
+      result.dbTest = {
+        success: false,
+        error: String(error).slice(0, 300),
+      };
+    }
+  } else {
+    result.dbTest = { success: false, error: 'database not initialized' };
+  }
+
+  return c.json(result);
 });
 
 export default app;

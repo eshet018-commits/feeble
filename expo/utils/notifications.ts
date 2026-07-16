@@ -313,16 +313,25 @@ export async function registerForPushNotifications(userId?: string): Promise<str
     return null;
   }
 
-  // Return cached token if we already have one for this session.
+  // Return cached token if we already have one — BUT only if it's a device
+  // push token (raw APNs/FCM), not a stale Expo push token. Expo push tokens
+  // require EAS + APNs credentials registered with Expo's servers, which this
+  // project doesn't have. If we find a stale Expo token, clear it and fall
+  // through to getDevicePushTokenAsync() for a fresh native token.
   try {
     const cached = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
     if (cached) {
-      if (userId) {
-        firebaseClient.savePushToken(userId, cached).catch((e) =>
-          console.warn('[Notifications] Failed to sync cached token:', e),
-        );
+      if (cached.startsWith('ExponentPushToken')) {
+        console.log('[Notifications] Found stale Expo push token — clearing and re-registering for native device token');
+        await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
+      } else {
+        if (userId) {
+          firebaseClient.savePushToken(userId, cached).catch((e) =>
+            console.warn('[Notifications] Failed to sync cached token:', e),
+          );
+        }
+        return cached;
       }
-      return cached;
     }
   } catch {}
 
@@ -496,8 +505,15 @@ export async function sendTestNotification(
 
   // --- Step 2: Remote push via Expo Push API (verifies home-screen delivery) ---
   try {
-    // Get the user's Expo push token from cache or register a new one.
+    // Get the user's push token from cache or register a new one.
+    // If the cached token is a stale Expo push token, clear it and re-register
+    // to get a native device push token (APNs on iOS, FCM on Android).
     let token = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
+    if (token && token.startsWith('ExponentPushToken')) {
+      details.push('Found stale Expo push token — re-registering for native device token...');
+      await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
+      token = null;
+    }
     if (!token) {
       details.push('No cached push token — attempting to register...');
       token = await registerForPushNotifications(userId);
