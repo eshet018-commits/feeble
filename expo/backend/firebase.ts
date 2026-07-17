@@ -70,9 +70,19 @@ try {
 
   if (apnsKeyId && apnsTeamId && apnsPrivateKeyPem) {
     apnsConfigured = true;
+    // Detect common format issues with the private key.
+    const hasLiteralNewlines = apnsPrivateKeyPem.includes('\\n');
+    const hasRealNewlines = apnsPrivateKeyPem.includes('\n');
+    const hasPemHeaders = apnsPrivateKeyPem.includes('-----BEGIN');
     console.log(
       `[Backend APNs] Direct APNs sending configured: team=${apnsTeamId}, key=${apnsKeyId}, bundle=${apnsBundleId}, sandbox=${apnsSandbox}`,
     );
+    console.log(
+      `[Backend APNs] Key format: len=${apnsPrivateKeyPem.length}, hasPEMHeaders=${hasPemHeaders}, hasRealNewlines=${hasRealNewlines}, hasLiteralNewlines=${hasLiteralNewlines}`,
+    );
+    if (hasLiteralNewlines && !hasRealNewlines) {
+      console.warn('[Backend APNs] WARNING: Private key contains literal \\n instead of real newlines — normalizing...');
+    }
   } else {
     console.warn(
       "[Backend APNs] Direct APNs NOT configured — hasKeyId:", !!apnsKeyId, "hasTeamId:", !!apnsTeamId, "hasPrivateKey:", !!apnsPrivateKeyPem,
@@ -97,10 +107,15 @@ function base64url(data: ArrayBuffer | Uint8Array): string {
 }
 
 function pemToDer(pem: string): ArrayBuffer {
-  // Extract only the base64 content between PEM headers. The previous regex
-  // /[^A-Za-z0-9+/=]/g kept header text like "BEGINPRIVATEKEY" (all letters
-  // are valid base64 chars), corrupting the decoded key.
-  const match = pem.match(
+  // Normalize literal "\n" (backslash-n) to actual newlines. When PEM keys
+  // are pasted into environment variable fields, newlines are often encoded
+  // as the literal two-character sequence \n instead of real newline chars.
+  // This corrupts base64 parsing because the fallback regex keeps "n" (a
+  // valid base64 char) but drops "\", shifting the entire base64 string.
+  let normalized = pem.replace(/\\n/g, "\n").replace(/\\r/g, "");
+
+  // Extract only the base64 content between PEM headers.
+  const match = normalized.match(
     /-----BEGIN[^-]*-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END[^-]*-----/,
   );
   let b64: string;
@@ -108,46 +123,81 @@ function pemToDer(pem: string): ArrayBuffer {
     b64 = match[1].replace(/[^A-Za-z0-9+/=]/g, "");
   } else {
     // Fallback: strip known PEM markers then filter to base64 only.
-    b64 = pem
+    b64 = normalized
       .replace(/-----BEGIN[^-]*-----/g, "")
       .replace(/-----END[^-]*-----/g, "")
       .replace(/[^A-Za-z0-9+/=]/g, "");
   }
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
+
+  if (!b64 || b64.length < 10) {
+    throw new Error(
+      `pemToDer: extracted base64 is too short (${b64.length} chars). Key may be malformed. First 50 chars of input: ${pem.slice(0, 50)}`,
+    );
+  }
+
+  try {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+  } catch (e) {
+    throw new Error(
+      `pemToDer: base64 decode failed (${b64.length} chars, first 30: ${b64.slice(0, 30)}): ${e}`,
+    );
+  }
 }
 
 /**
- * Convert a DER-encoded ECDSA signature (ASN.1 SEQUENCE of two INTEGERs)
- * to the raw R||S format expected by JWT (ES256). Web Crypto API produces
- * DER-encoded signatures, but JWT requires raw concatenation.
+ * Convert an ECDSA signature to the raw R||S format expected by JWT (ES256).
+ *
+ * Web Crypto API in browsers and Node.js produces DER-encoded signatures
+ * (ASN.1 SEQUENCE of two INTEGERs), but Bun returns raw R||S (64 bytes)
+ * directly. This function handles both formats:
+ *   - If the signature is 64 bytes and doesn't start with 0x30, it's already
+ *     raw R||S — return as-is.
+ *   - If it starts with 0x30, parse the DER structure and extract R and S.
  */
-function derToRawSignature(derSig: ArrayBuffer): ArrayBuffer {
-  const der = new Uint8Array(derSig);
-  // Minimal ASN.1 parser for ECDSA signature: SEQUENCE { r INTEGER, s INTEGER }
+function derToRawSignature(sig: ArrayBuffer): ArrayBuffer {
+  const bytes = new Uint8Array(sig);
+
+  // Already raw R||S (64 bytes for P-256) — Bun and some other runtimes
+  // return this format directly from crypto.subtle.sign().
+  if (bytes.length === 64 && bytes[0] !== 0x30) {
+    return sig;
+  }
+
+  // Also handle 66-byte raw (unlikely but safe) or other non-DER formats.
+  if (bytes[0] !== 0x30) {
+    // If it's not DER and not 64 bytes, throw with a helpful message.
+    if (bytes.length < 64) {
+      throw new Error(
+        `derToRawSignature: unexpected signature format — length=${bytes.length}, firstByte=0x${bytes[0].toString(16)}. Not DER (no 0x30) and not raw R||S (not 64 bytes).`,
+      );
+    }
+    // Assume raw R||S, take first 64 bytes.
+    return bytes.slice(0, 64).buffer;
+  }
+
+  // DER-encoded: parse ASN.1 SEQUENCE { r INTEGER, s INTEGER }
   let offset = 0;
-  if (der[offset++] !== 0x30) throw new Error("Invalid DER: expected SEQUENCE");
+  if (bytes[offset++] !== 0x30) throw new Error("Invalid DER: expected SEQUENCE");
   // Read SEQUENCE length (simplified — handles short form only)
-  const seqLen = der[offset++];
+  offset++; // seqLen — not needed for parsing
   // r
-  if (der[offset++] !== 0x02) throw new Error("Invalid DER: expected INTEGER for r");
-  const rLen = der[offset++];
-  const rBytes = der.slice(offset, offset + rLen);
+  if (bytes[offset++] !== 0x02) throw new Error("Invalid DER: expected INTEGER for r");
+  const rLen = bytes[offset++];
+  const rBytes = bytes.slice(offset, offset + rLen);
   offset += rLen;
   // s
-  if (der[offset++] !== 0x02) throw new Error("Invalid DER: expected INTEGER for s");
-  const sLen = der[offset++];
-  const sBytes = der.slice(offset, offset + sLen);
+  if (bytes[offset++] !== 0x02) throw new Error("Invalid DER: expected INTEGER for s");
+  const sLen = bytes[offset++];
+  const sBytes = bytes.slice(offset, offset + sLen);
 
   // Each value must be exactly 32 bytes, zero-padded on the left.
   const raw = new Uint8Array(64);
-  // Copy r (strip leading zero padding byte if present, then right-align)
   const rStart = rBytes.length > 32 ? rBytes.length - 32 : 0;
   const rSrc = rBytes.slice(rStart);
   raw.set(rSrc, 32 - rSrc.length);
-  // Copy s
   const sStart = sBytes.length > 32 ? sBytes.length - 32 : 0;
   const sSrc = sBytes.slice(sStart);
   raw.set(sSrc, 32 + (32 - sSrc.length));
