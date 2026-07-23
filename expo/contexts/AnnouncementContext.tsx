@@ -6,7 +6,6 @@ import { useUser } from './UserContext';
 import { useGroups } from './GroupContext';
 import {
   notifyAnnouncement,
-  pushToGroupMembers,
   isAnnouncementSeen,
   markAnnouncementSeen,
   isNotifSeenSync,
@@ -135,17 +134,9 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
       try {
         const announcement = await firebaseClient.createAnnouncement(data);
 
-        // Send remote push notifications so recipients see them on their home
-        // screen even when the app is closed. The backend push service can't
-        // access Firebase (permission_denied), so the creating client sends
-        // pushes via the backend tRPC proxy.
-        pushToGroupMembers({
-          groupId: data.groupId,
-          excludeUserId: data.createdBy,
-          title: `📢 ${announcement.title}`,
-          body: data.body || 'New announcement',
-          data: { kind: 'announcement', announcementId: announcement.id, groupId: data.groupId },
-        }).catch((e) => console.warn('[Announcement] Remote push failed:', e));
+        // Remote push notifications are sent exclusively by the backend push
+        // service (Firebase listener). Sending from the client here as well
+        // caused every recipient to get the notification twice.
         return announcement;
       } finally {
         setIsCreating(false);

@@ -904,24 +904,10 @@ export async function notifyChatMessage(params: {
     return;
   }
 
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: `${params.senderName} · ${params.chatName}`,
-        body: params.text || 'Sent a message',
-        data: {
-          kind: 'chat',
-          chatId: params.chatId,
-          groupId: params.groupId,
-          recipientUserId: params.recipientUserId,
-        },
-        sound: settings.soundEnabled,
-      },
-      trigger: null, // fire immediately
-    });
-  } catch (error) {
-    console.error('[Notifications] Failed to notify chat message:', error);
-  }
+  // On native, the backend push service already delivers a remote push for
+  // this message (shown by the foreground notification handler). Scheduling a
+  // local notification here as well caused the same notification to appear
+  // twice, so this is intentionally a no-op on native.
 }
 
 /**
@@ -946,24 +932,8 @@ export async function notifyAnnouncement(params: {
     return;
   }
 
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: `📢 ${params.groupName}`,
-        body: `New announcement: ${params.title}`,
-        data: {
-          kind: 'announcement',
-          announcementId: params.announcementId,
-          groupId: params.groupId,
-          recipientUserId: params.recipientUserId,
-        },
-        sound: true,
-      },
-      trigger: null,
-    });
-  } catch (error) {
-    console.error('[Notifications] Failed to notify announcement:', error);
-  }
+  // On native, the backend push service already delivers a remote push for
+  // this announcement. A local notification here would duplicate it.
 }
 
 /**
@@ -985,23 +955,8 @@ export async function notifyEvent(params: {
     return;
   }
 
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: `${params.groupName} · New Event`,
-        body: params.title,
-        data: {
-          kind: 'event',
-          eventId: params.eventId,
-          groupId: params.groupId,
-        },
-        sound: true,
-      },
-      trigger: null,
-    });
-  } catch (error) {
-    console.error('[Notifications] Failed to notify event:', error);
-  }
+  // On native, the backend push service already delivers a remote push for
+  // this event. A local notification here would duplicate it.
 }
 
 // ---------------------------------------------------------------------------
