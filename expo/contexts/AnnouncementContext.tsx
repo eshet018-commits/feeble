@@ -10,6 +10,7 @@ import {
   markAnnouncementSeen,
   isNotifSeenSync,
   markNotifSeen,
+  pushToGroupMembers,
 } from '@/utils/notifications';
 import { useNotifications } from './NotificationContext';
 
@@ -134,9 +135,16 @@ export const [AnnouncementProvider, useAnnouncements] = createContextHook(() => 
       try {
         const announcement = await firebaseClient.createAnnouncement(data);
 
-        // Remote push notifications are sent exclusively by the backend push
-        // service (Firebase listener). Sending from the client here as well
-        // caused every recipient to get the notification twice.
+        // Send remote pushes to group members (fire-and-forget). The sender's
+        // app is the single sender — the backend is a stateless proxy, so
+        // there is no duplicate listener path.
+        pushToGroupMembers({
+          groupId: data.groupId,
+          excludeUserId: data.createdBy,
+          title: `📢 ${groupNameById.current[data.groupId] || 'Group'}`,
+          body: `New announcement: ${data.title}`,
+          data: { kind: 'announcement', announcementId: announcement.id, groupId: data.groupId },
+        }).catch(() => {});
         return announcement;
       } finally {
         setIsCreating(false);

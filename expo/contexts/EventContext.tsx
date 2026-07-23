@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Event, Category, ExpandedEvent, Poll, PollOption } from '@/types/event';
 import { DEFAULT_CATEGORIES } from '@/constants/categories';
-import { scheduleEventReminders, cancelEventReminders, isNotifSeenSync, markNotifSeen, notifyEvent } from '@/utils/notifications';
+import { scheduleEventReminders, cancelEventReminders, isNotifSeenSync, markNotifSeen, notifyEvent, pushToGroupMembers } from '@/utils/notifications';
 import { firebaseClient } from '@/lib/firebase-client';
 import { useGroups } from './GroupContext';
 import { useNotifications } from './NotificationContext';
@@ -123,9 +123,18 @@ export const [EventProvider, useEvents] = createContextHook(() => {
         console.warn('Failed to schedule event reminders:', notifError);
       }
 
-      // Remote push notifications are sent exclusively by the backend push
-      // service (Firebase listener). Sending from the client here as well
-      // caused every recipient to get the notification twice.
+      // Send remote pushes to group members (fire-and-forget). The sender's
+      // app is the single sender — the backend is a stateless proxy, so
+      // there is no duplicate listener path.
+      if (event.groupId) {
+        pushToGroupMembers({
+          groupId: event.groupId,
+          excludeUserId: userId ?? undefined,
+          title: `${groupNameById.current[event.groupId] || 'Group'} · New Event`,
+          body: event.title,
+          data: { kind: 'event', eventId: result.id, groupId: event.groupId },
+        }).catch(() => {});
+      }
 
       return event;
     } catch (error: any) {

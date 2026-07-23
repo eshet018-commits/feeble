@@ -14,6 +14,7 @@ import {
   getChatNotifSettings,
   isNotifSeenSync,
   markNotifSeen,
+  pushChatMessageToGroupMembers,
 } from '@/utils/notifications';
 import { useNotifications } from './NotificationContext';
 
@@ -183,12 +184,23 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       if (!text.trim()) throw new Error('Message cannot be empty');
       const message = await firebaseClient.sendMessage(chatId, userId, userName, text.trim(), replyTo);
 
-      // Remote push notifications are sent exclusively by the backend push
-      // service, which listens to Firebase for new messages. Sending from the
-      // client here as well caused every recipient to get the notification twice.
+      // Send remote pushes to recipients (fire-and-forget). The sender's app
+      // is the single sender — the backend is a stateless proxy, so there is
+      // no duplicate listener path.
+      const chat = chats.find((c) => c.id === chatId);
+      if (chat) {
+        pushChatMessageToGroupMembers({
+          groupId: chat.groupId,
+          chatId,
+          excludeUserId: userId,
+          title: `${userName} · ${chat.name}`,
+          body: text.trim(),
+          data: { kind: 'chat', chatId, groupId: chat.groupId },
+        }).catch(() => {});
+      }
       return message;
     },
-    [userId, userName]
+    [userId, userName, chats]
   );
 
   const sendFileMessage = useCallback(
@@ -197,10 +209,20 @@ export const [ChatProvider, useChats] = createContextHook(() => {
       const attachment = await firebaseClient.uploadChatAttachment(chatId, userId, file);
       await firebaseClient.sendFileMessage(chatId, userId, userName, attachment, caption?.trim() || '', replyTo);
 
-      // Remote push is handled by the backend push service (single sender —
-      // prevents duplicate notifications).
+      // Send remote pushes to recipients (fire-and-forget, single sender path).
+      const chat = chats.find((c) => c.id === chatId);
+      if (chat) {
+        pushChatMessageToGroupMembers({
+          groupId: chat.groupId,
+          chatId,
+          excludeUserId: userId,
+          title: `${userName} · ${chat.name}`,
+          body: caption?.trim() || file.name,
+          data: { kind: 'chat', chatId, groupId: chat.groupId },
+        }).catch(() => {});
+      }
     },
-    [userId, userName]
+    [userId, userName, chats]
   );
 
   const getMessagesForChat = useCallback(

@@ -4,8 +4,7 @@ import { cors } from "hono/cors";
 
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
-import { startPushService } from "./push-service";
-import { messaging, database, isConfigured, isApnsToken, sendApnsPush, getDbUrl, getProjId } from "./firebase";
+import { messaging, database, isConfigured, isApnsToken, sendApnsPush, getProjId } from "./firebase";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -178,9 +177,11 @@ app.use(
   }),
 );
 
-// Start the backend push notification service — uses Firebase Admin SDK
-// to listen for new content and send FCM/Expo push notifications.
-startPushService();
+// NOTE: The backend is intentionally STATELESS. It no longer runs an
+// always-on Firebase listener service — those long-lived SSE connections
+// caused the instance to restart constantly, returning 503 to the app.
+// Pushes are sent request-driven: the sender's app POSTs to /api/push at
+// the moment content is created.
 
 app.get("/", (c) => {
   return c.json({
