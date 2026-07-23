@@ -537,34 +537,29 @@ export async function sendTestNotification(
       details.push(remoteError);
     } else {
       try {
-        const res = await fetch(`${baseUrl}/api/push`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            messages: [{
-              to: token,
-              title: 'Test Notification (Remote)',
-              body: 'This verifies remote push works — you should see this even when the app is closed.',
-              data: { kind: 'default', test: true },
-              sound: true,
-              priority: 'high',
-            }],
-          }),
+        // Retries automatically on transient 502/503/504 gateway errors
+        // (backend cold start / redeploy) and non-JSON responses.
+        const result = await postPushWithRetry(`${baseUrl}/api/push`, {
+          messages: [{
+            to: token,
+            title: 'Test Notification (Remote)',
+            body: 'This verifies remote push works — you should see this even when the app is closed.',
+            data: { kind: 'default', test: true },
+            sound: true,
+            priority: 'high',
+          }],
         });
 
-        const rawText = await res.text();
-        let json: any = null;
-        try {
-          json = JSON.parse(rawText);
-        } catch {
-          // Backend returned non-JSON (e.g. an HTML error page during a
-          // redeploy, or a gateway error). Report the status + snippet.
-          remoteError = `Backend returned non-JSON response (HTTP ${res.status}). It may be redeploying — wait ~30s and try again. Body: ${rawText.slice(0, 120)}`;
+        const json: any = result.json;
+        if (json === null) {
+          // Still non-JSON after all retries — backend is genuinely down or
+          // stuck mid-redeploy.
+          remoteError = `Backend unavailable after ${result.attempts} attempts (HTTP ${result.status}). It is likely redeploying — wait ~30s and try again. Body: ${result.rawText.slice(0, 120)}`;
           details.push(remoteError);
           return { localShown, remoteAttempted, remoteSuccess: false, remoteError, pushToken, details };
+        }
+        if (result.attempts > 1) {
+          details.push(`Backend reached after ${result.attempts} attempts (it was briefly restarting).`);
         }
         console.log('[Notifications] Remote test push backend response:', JSON.stringify(json).slice(0, 200));
 
@@ -627,6 +622,61 @@ interface RemotePushPayload {
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
+interface PushProxyResult {
+  ok: boolean;
+  status: number;
+  json: any | null;
+  rawText: string;
+  attempts: number;
+}
+
+/**
+ * POST JSON to the backend push proxy with automatic retry.
+ *
+ * The backend occasionally returns a gateway 502/503 (HTML, not JSON) while
+ * it is cold-starting or redeploying. Those are transient — retrying after a
+ * short backoff almost always succeeds. Retries on: network errors,
+ * 502/503/504 statuses, and any non-JSON response body.
+ */
+async function postPushWithRetry(
+  url: string,
+  body: unknown,
+  maxAttempts: number = 4,
+): Promise<PushProxyResult> {
+  let last: PushProxyResult = { ok: false, status: 0, json: null, rawText: '', attempts: 0 };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    last.attempts = attempt;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      const rawText = await res.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(rawText);
+      } catch {
+        json = null;
+      }
+      last = { ok: res.ok && json !== null, status: res.status, json, rawText, attempts: attempt };
+      const transient = json === null || res.status === 502 || res.status === 503 || res.status === 504;
+      if (!transient) return last;
+      console.log(`[Notifications] Push proxy transient failure (HTTP ${res.status}, attempt ${attempt}/${maxAttempts}) — ${json === null ? 'non-JSON body' : 'gateway error'}, retrying...`);
+    } catch (e) {
+      last = { ok: false, status: 0, json: null, rawText: String(e).slice(0, 200), attempts: attempt };
+      console.log(`[Notifications] Push proxy network error (attempt ${attempt}/${maxAttempts}): ${String(e).slice(0, 120)}`);
+    }
+    if (attempt < maxAttempts) {
+      await new Promise<void>((resolve) => setTimeout(resolve, attempt * 2500));
+    }
+  }
+  return last;
+}
+
 /**
  * Send remote push notifications to a set of Expo push tokens via the Expo
  * Push API.
@@ -681,27 +731,18 @@ export async function sendRemotePushes(
       const batch = messages.slice(i, i + 100);
       let delivered = false;
       for (const baseUrl of candidateUrls) {
-        try {
-          const res = await fetch(`${baseUrl}/api/push`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
-            body: JSON.stringify({ messages: batch }),
-          });
-          if (!res.ok) continue; // try next URL
-          const json = (await res.json()) as any;
-          if (json?.sent && json.sent > 0) {
-            console.log(`[Notifications] Push proxy: ${json.sent} delivered (${batch.length} tokens)`);
-            delivered = true;
-          } else if (json?.error) {
-            console.warn(`[Notifications] Push proxy error: ${String(json.error).slice(0, 200)}`);
-          }
-          break; // got a response — no need to try other URLs
-        } catch {
-          // try next URL
+        // Retries automatically on transient 502/503/504 gateway errors
+        // (backend cold start / redeploy) and non-JSON responses.
+        const result = await postPushWithRetry(`${baseUrl}/api/push`, { messages: batch }, 3);
+        if (!result.ok) continue; // try next URL
+        const json: any = result.json;
+        if (json?.sent && json.sent > 0) {
+          console.log(`[Notifications] Push proxy: ${json.sent} delivered (${batch.length} tokens, ${result.attempts} attempt(s))`);
+          delivered = true;
+        } else if (json?.error) {
+          console.warn(`[Notifications] Push proxy error: ${String(json.error).slice(0, 200)}`);
         }
+        break; // got a JSON response — no need to try other URLs
       }
       if (!delivered) {
         console.log('[Notifications] All backend push proxies failed — skipping batch');
