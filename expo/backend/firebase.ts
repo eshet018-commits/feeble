@@ -68,7 +68,18 @@ try {
   apnsBundleId = process.env.APNS_BUNDLE_ID || "app.rork.feeble";
   apnsSandbox = (process.env.APNS_SANDBOX || "true") !== "false";
 
-  if (apnsKeyId && apnsTeamId && apnsPrivateKeyPem) {
+  // Validate the team ID: Apple Developer Team IDs are exactly 10
+  // alphanumeric characters (e.g. "A1B2C3D4E5"). A UUID here means the
+  // wrong value was picked up (e.g. a project UUID) — APNs would reject
+  // every JWT with 403 InvalidProviderToken.
+  const teamIdLooksValid = !!apnsTeamId && /^[A-Z0-9]{10}$/i.test(apnsTeamId);
+  if (apnsTeamId && !teamIdLooksValid) {
+    console.error(
+      `[Backend APNs] INVALID TEAM ID: "${apnsTeamId}" is not an Apple Developer Team ID (must be 10 alphanumeric chars, e.g. A1B2C3D4E5). Set the APNS_TEAM_ID env var to your real Apple Team ID (top-right of developer.apple.com/account).`,
+    );
+  }
+
+  if (apnsKeyId && apnsTeamId && apnsPrivateKeyPem && teamIdLooksValid) {
     apnsConfigured = true;
     // Detect common format issues with the private key.
     const hasLiteralNewlines = apnsPrivateKeyPem.includes('\\n');
@@ -85,7 +96,7 @@ try {
     }
   } else {
     console.warn(
-      "[Backend APNs] Direct APNs NOT configured — hasKeyId:", !!apnsKeyId, "hasTeamId:", !!apnsTeamId, "hasPrivateKey:", !!apnsPrivateKeyPem,
+      "[Backend APNs] Direct APNs NOT configured — hasKeyId:", !!apnsKeyId, "hasTeamId:", !!apnsTeamId, "teamIdValid:", teamIdLooksValid, "hasPrivateKey:", !!apnsPrivateKeyPem,
     );
   }
 } catch (e) {
@@ -218,12 +229,15 @@ async function getAccessToken(): Promise<string | null> {
 
     const payload = {
       iss: serviceAccount.client_email,
-      // Use the broad "firebase" scope which covers RTDB, Messaging, and
-      // other Firebase services. The individual scopes
-      // (firebase.database + firebase.messaging) should also work, but the
-      // broad scope matches what firebase-admin uses internally and avoids
-      // edge cases where a 401 is returned despite having the right scopes.
-      scope: "https://www.googleapis.com/auth/firebase",
+      // The Realtime Database REST API requires BOTH the userinfo.email
+      // scope AND the firebase.database scope. Without userinfo.email, RTDB
+      // returns 401 "Unauthorized request." even with a valid access token.
+      // cloud-platform covers FCM HTTP v1 as well.
+      scope: [
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/firebase.database",
+        "https://www.googleapis.com/auth/firebase.messaging",
+      ].join(" "),
       aud: serviceAccount.token_uri,
       iat: now,
       exp: now + 3600,
