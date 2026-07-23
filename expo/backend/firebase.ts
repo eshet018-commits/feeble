@@ -86,7 +86,7 @@ try {
     const hasRealNewlines = apnsPrivateKeyPem.includes('\n');
     const hasPemHeaders = apnsPrivateKeyPem.includes('-----BEGIN');
     console.log(
-      `[Backend APNs] Direct APNs sending configured: team=${apnsTeamId}, key=${apnsKeyId}, bundle=${apnsBundleId}, sandbox=${apnsSandbox}`,
+      `[Backend APNs] Direct APNs sending configured (v3-auth-header): team=${apnsTeamId}, key=${apnsKeyId}, bundle=${apnsBundleId}, sandbox=${apnsSandbox}`,
     );
     console.log(
       `[Backend APNs] Key format: len=${apnsPrivateKeyPem.length}, hasPEMHeaders=${hasPemHeaders}, hasRealNewlines=${hasRealNewlines}, hasLiteralNewlines=${hasLiteralNewlines}`,
@@ -725,7 +725,7 @@ async function sendApnsPush(params: {
     const res = await fetch(url, {
       method: 'POST',
       headers: {
-        'apns-authorization': `bearer ${jwt}`,
+        authorization: `bearer ${jwt}`,
         'apns-push-type': 'alert',
         'apns-priority': priority === 'high' ? '10' : '5',
         'apns-topic': apnsBundleId!,
@@ -750,7 +750,7 @@ async function sendApnsPush(params: {
           const retryRes = await fetch(url, {
             method: 'POST',
             headers: {
-              'apns-authorization': `bearer ${newJwt}`,
+              authorization: `bearer ${newJwt}`,
               'apns-push-type': 'alert',
               'apns-priority': priority === 'high' ? '10' : '5',
               'apns-topic': apnsBundleId!,
@@ -777,7 +777,7 @@ async function sendApnsPush(params: {
         const altRes = await fetch(`${altHost}/3/device/${token}`, {
           method: 'POST',
           headers: {
-            'apns-authorization': `bearer ${jwt}`,
+            authorization: `bearer ${jwt}`,
             'apns-push-type': 'alert',
             'apns-priority': priority === 'high' ? '10' : '5',
             'apns-topic': apnsBundleId!,
