@@ -555,7 +555,17 @@ export async function sendTestNotification(
           }),
         });
 
-        const json = (await res.json()) as any;
+        const rawText = await res.text();
+        let json: any = null;
+        try {
+          json = JSON.parse(rawText);
+        } catch {
+          // Backend returned non-JSON (e.g. an HTML error page during a
+          // redeploy, or a gateway error). Report the status + snippet.
+          remoteError = `Backend returned non-JSON response (HTTP ${res.status}). It may be redeploying — wait ~30s and try again. Body: ${rawText.slice(0, 120)}`;
+          details.push(remoteError);
+          return { localShown, remoteAttempted, remoteSuccess: false, remoteError, pushToken, details };
+        }
         console.log('[Notifications] Remote test push backend response:', JSON.stringify(json).slice(0, 200));
 
         if (json?.sent && json.sent > 0) {

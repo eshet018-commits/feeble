@@ -624,6 +624,68 @@ let apnsJwtCache: string | null = null;
 let apnsJwtExpiry = 0;
 
 /**
+ * Perform an APNs request over a real HTTP/2 connection.
+ *
+ * APNs REQUIRES HTTP/2 — plain fetch() in this runtime speaks HTTP/1.1,
+ * which causes Apple to drop the authorization header and reject every
+ * push with 403 {"reason":"MissingProviderToken"}. Using node:http2
+ * guarantees the provider JWT actually reaches Apple.
+ */
+async function apnsHttp2Request(
+  host: string,
+  path: string,
+  jwt: string,
+  extraHeaders: Record<string, string>,
+  body: string,
+): Promise<{ status: number; text: string }> {
+  const http2 = await import("node:http2");
+  return new Promise((resolve, reject) => {
+    const client = http2.connect(`https://${host}`);
+    const timeout = setTimeout(() => {
+      client.close();
+      reject(new Error("APNs HTTP/2 request timed out after 15s"));
+    }, 15000);
+
+    client.on("error", (err: Error) => {
+      clearTimeout(timeout);
+      client.close();
+      reject(err);
+    });
+
+    const req = client.request({
+      ":method": "POST",
+      ":path": path,
+      ":scheme": "https",
+      ":authority": host,
+      authorization: `bearer ${jwt}`,
+      "content-type": "application/json",
+      ...extraHeaders,
+    });
+
+    let status = 0;
+    let data = "";
+    req.setEncoding("utf8");
+    req.on("response", (headers: Record<string, unknown>) => {
+      status = Number(headers[":status"] || 0);
+    });
+    req.on("data", (chunk: string) => {
+      data += chunk;
+    });
+    req.on("end", () => {
+      clearTimeout(timeout);
+      client.close();
+      resolve({ status, text: data });
+    });
+    req.on("error", (err: Error) => {
+      clearTimeout(timeout);
+      client.close();
+      reject(err);
+    });
+    req.end(body);
+  });
+}
+
+/**
  * Mint a provider JWT token for APNs HTTP/2 API.
  * This signs a JWT with the .p8 private key (ES256 algorithm).
  * The JWT authenticates us to send pushes directly via APNs.
@@ -700,9 +762,9 @@ async function sendApnsPush(params: {
   }
 
   const host = apnsSandbox
-    ? 'https://api.sandbox.push.apple.com'
-    : 'https://api.push.apple.com';
-  const url = `${host}/3/device/${token}`;
+    ? 'api.sandbox.push.apple.com'
+    : 'api.push.apple.com';
+  const path = `/3/device/${token}`;
 
   const apsPayload: Record<string, any> = {
     alert: { title, body },
@@ -721,81 +783,55 @@ async function sendApnsPush(params: {
     }
   }
 
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        authorization: `bearer ${jwt}`,
-        'apns-push-type': 'alert',
-        'apns-priority': priority === 'high' ? '10' : '5',
-        'apns-topic': apnsBundleId!,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+  const apnsHeaders: Record<string, string> = {
+    'apns-push-type': 'alert',
+    'apns-priority': priority === 'high' ? '10' : '5',
+    'apns-topic': apnsBundleId!,
+  };
+  const bodyJson = JSON.stringify(payload);
 
-    if (res.ok) {
+  try {
+    const res = await apnsHttp2Request(host, path, jwt, apnsHeaders, bodyJson);
+
+    if (res.status >= 200 && res.status < 300) {
       console.log(`[Backend APNs] Push accepted for token ${token.slice(0, 12)}... (${apnsSandbox ? 'sandbox' : 'production'})`);
       return true;
-    } else {
-      const text = await res.text();
-      console.warn(`[Backend APNs] Push rejected: ${res.status} ${text.slice(0, 300)}`);
-
-      // If we get a 403 withExpiredProviderToken, refresh the JWT and retry once.
-      if (res.status === 403 && text.includes('ExpiredProviderToken')) {
-        apnsJwtCache = null;
-        apnsJwtExpiry = 0;
-        const newJwt = await getApnsProviderToken();
-        if (newJwt) {
-          const retryRes = await fetch(url, {
-            method: 'POST',
-            headers: {
-              authorization: `bearer ${newJwt}`,
-              'apns-push-type': 'alert',
-              'apns-priority': priority === 'high' ? '10' : '5',
-              'apns-topic': apnsBundleId!,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(payload),
-          });
-          if (retryRes.ok) {
-            console.log(`[Backend APNs] Retry succeeded for token ${token.slice(0, 12)}...`);
-            return true;
-          } else {
-            const retryText = await retryRes.text();
-            console.warn(`[Backend APNs] Retry also failed: ${retryRes.status} ${retryText.slice(0, 200)}`);
-          }
-        }
-      }
-
-      // If sandbox fails with DeviceTokenNotForTopic, try production and vice versa.
-      if (res.status === 400 && text.includes('DeviceTokenNotForTopic')) {
-        const altHost = apnsSandbox
-          ? 'https://api.push.apple.com'
-          : 'https://api.sandbox.push.apple.com';
-        console.warn(`[Backend APNs] Token mismatch — trying ${apnsSandbox ? 'production' : 'sandbox'} APNs...`);
-        const altRes = await fetch(`${altHost}/3/device/${token}`, {
-          method: 'POST',
-          headers: {
-            authorization: `bearer ${jwt}`,
-            'apns-push-type': 'alert',
-            'apns-priority': priority === 'high' ? '10' : '5',
-            'apns-topic': apnsBundleId!,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-        if (altRes.ok) {
-          console.log(`[Backend APNs] Alternate APNs endpoint accepted push for ${token.slice(0, 12)}...`);
-          return true;
-        } else {
-          const altText = await altRes.text();
-          console.warn(`[Backend APNs] Alternate endpoint also rejected: ${altRes.status} ${altText.slice(0, 200)}`);
-        }
-      }
-
-      return false;
     }
+
+    console.warn(`[Backend APNs] Push rejected: ${res.status} ${res.text.slice(0, 300)}`);
+
+    // If the provider JWT expired, refresh it and retry once.
+    if (res.status === 403 && res.text.includes('ExpiredProviderToken')) {
+      apnsJwtCache = null;
+      apnsJwtExpiry = 0;
+      const newJwt = await getApnsProviderToken();
+      if (newJwt) {
+        const retryRes = await apnsHttp2Request(host, path, newJwt, apnsHeaders, bodyJson);
+        if (retryRes.status >= 200 && retryRes.status < 300) {
+          console.log(`[Backend APNs] Retry succeeded for token ${token.slice(0, 12)}...`);
+          return true;
+        }
+        console.warn(`[Backend APNs] Retry also failed: ${retryRes.status} ${retryRes.text.slice(0, 200)}`);
+      }
+    }
+
+    // If the token belongs to the other environment, try the alternate host.
+    // BadDeviceToken on sandbox usually means the token is a production
+    // (TestFlight/App Store) token, and vice versa.
+    if (res.status === 400 && (res.text.includes('DeviceTokenNotForTopic') || res.text.includes('BadDeviceToken'))) {
+      const altHost = apnsSandbox
+        ? 'api.push.apple.com'
+        : 'api.sandbox.push.apple.com';
+      console.warn(`[Backend APNs] Token/environment mismatch — trying ${apnsSandbox ? 'production' : 'sandbox'} APNs...`);
+      const altRes = await apnsHttp2Request(altHost, path, jwt, apnsHeaders, bodyJson);
+      if (altRes.status >= 200 && altRes.status < 300) {
+        console.log(`[Backend APNs] Alternate APNs endpoint accepted push for ${token.slice(0, 12)}...`);
+        return true;
+      }
+      console.warn(`[Backend APNs] Alternate endpoint also rejected: ${altRes.status} ${altRes.text.slice(0, 200)}`);
+    }
+
+    return false;
   } catch (e) {
     console.warn(`[Backend APNs] Send error for token ${token.slice(0, 12)}...:`, e);
     return false;
