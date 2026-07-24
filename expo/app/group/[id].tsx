@@ -17,38 +17,33 @@ import { useGroups } from '@/contexts/GroupContext';
 import { useEvents } from '@/contexts/EventContext';
 import { useAnnouncements } from '@/contexts/AnnouncementContext';
 import { useUser } from '@/contexts/UserContext';
-import { ExpandedEvent, Announcement, AnnouncementDuration } from '@/types/event';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { TranslationKey } from '@/constants/translations';
+import { ExpandedEvent, Announcement } from '@/types/event';
 
 type Tab = 'events' | 'announcements';
 
-const DURATION_LABELS: Record<AnnouncementDuration, string> = {
-  0: 'Never expires',
-  6: '6h',
-  24: '1d',
-  72: '3d',
-  168: '1w',
-  720: '30d',
-};
+type TFunc = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
-function formatExpiry(iso: string): string {
+function formatExpiry(iso: string, t: TFunc): string {
   const now = Date.now();
   const ts = new Date(iso).getTime();
   const remaining = ts - now;
-  if (remaining <= 0) return 'expired';
-  if (remaining < 3_600_000) return `${Math.max(1, Math.floor(remaining / 60_000))}m left`;
-  if (remaining < 86_400_000) return `${Math.floor(remaining / 3_600_000)}h left`;
-  return `${Math.floor(remaining / 86_400_000)}d left`;
+  if (remaining <= 0) return t('expired');
+  if (remaining < 3_600_000) return t('timeLeftM', { n: Math.max(1, Math.floor(remaining / 60_000)) });
+  if (remaining < 86_400_000) return t('timeLeftH', { n: Math.floor(remaining / 3_600_000) });
+  return t('timeLeftD', { n: Math.floor(remaining / 86_400_000) });
 }
 
-function formatRelative(iso: string): string {
+function formatRelative(iso: string, t: TFunc, locale: string): string {
   const now = Date.now();
   const ts = new Date(iso).getTime();
   const diff = now - ts;
-  if (diff < 60_000) return 'just now';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (diff < 60_000) return t('justNow');
+  if (diff < 3_600_000) return t('timeAgoM', { n: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return t('timeAgoH', { n: Math.floor(diff / 3_600_000) });
+  if (diff < 604_800_000) return t('timeAgoD', { n: Math.floor(diff / 86_400_000) });
+  return new Date(iso).toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
 function AnnouncementPollView({
@@ -62,6 +57,7 @@ function AnnouncementPollView({
   userId: string;
   onVote: (announcementId: string, optionId: string) => void;
 }) {
+  const { t } = useLanguage();
   if (!poll) return null;
 
   const votes = poll.votes || {};
@@ -116,10 +112,10 @@ function AnnouncementPollView({
 
       <View style={styles.pollFooter}>
         <Text style={styles.pollFooterText}>
-          {totalVotes} {totalVotes === 1 ? 'vote' : 'votes'}
+          {totalVotes} {totalVotes === 1 ? t('vote') : t('votes')}
         </Text>
         <Text style={styles.pollVoteHint}>
-          {userVote ? 'Tap to change your vote' : 'Tap an option to vote'}
+          {userVote ? t('tapToChangeVote') : t('tapToVote')}
         </Text>
       </View>
     </View>
@@ -139,6 +135,7 @@ export default function GroupDetailScreen() {
 
   const { setActiveGroup, getAnnouncementsForGroup, deleteAnnouncement, voteOnAnnouncementPoll } = useAnnouncements();
   const { userId } = useUser();
+  const { t, locale } = useLanguage();
   const [activeTab, setActiveTab] = useState<Tab>('events');
 
   useEffect(() => {
@@ -161,13 +158,13 @@ export default function GroupDetailScreen() {
   };
 
   const handleDeleteAnnouncement = (a: Announcement) => {
-    Alert.alert('Delete Announcement', `Remove "${a.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('deleteAnnouncementTitle'), t('removeConfirm', { name: a.title }), [
+      { text: t('cancel'), style: 'cancel' },
       {
-        text: 'Delete',
+        text: t('delete'),
         style: 'destructive',
         onPress: () => deleteAnnouncement(a.id).catch((e) =>
-          Alert.alert('Error', e?.message || 'Failed to delete announcement'),
+          Alert.alert(t('error'), e?.message || t('deleteAnnouncementFailed')),
         ),
       },
     ]);
@@ -176,7 +173,7 @@ export default function GroupDetailScreen() {
   const handleVote = (announcementId: string, optionId: string) => {
     if (!userId) return;
     voteOnAnnouncementPoll(announcementId, userId, optionId).catch((e) =>
-      Alert.alert('Vote failed', e?.message || 'Could not register your vote.'),
+      Alert.alert(t('voteFailed'), e?.message || t('voteFailedMsg')),
     );
   };
 
@@ -205,10 +202,10 @@ export default function GroupDetailScreen() {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    if (date.toDateString() === today.toDateString()) return 'Today';
-    if (date.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
+    if (date.toDateString() === today.toDateString()) return t('today');
+    if (date.toDateString() === tomorrow.toDateString()) return t('tomorrow');
 
-    return date.toLocaleDateString('en-US', { 
+    return date.toLocaleDateString(locale, { 
       weekday: 'long', 
       month: 'short', 
       day: 'numeric' 
@@ -216,8 +213,8 @@ export default function GroupDetailScreen() {
   };
 
   const formatTime = (dateString: string, allDay: boolean) => {
-    if (allDay) return 'All Day';
-    return new Date(dateString).toLocaleTimeString('en-US', {
+    if (allDay) return t('allDay');
+    return new Date(dateString).toLocaleTimeString(locale, {
       hour: 'numeric',
       minute: '2-digit',
     });
@@ -236,12 +233,12 @@ export default function GroupDetailScreen() {
 
   const handleLeaveGroup = () => {
     Alert.alert(
-      'Leave Group',
-      `Are you sure you want to leave "${group?.name}"? You will no longer have access to this group's events.`,
+      t('leaveGroup'),
+      t('leaveGroupConfirm', { name: group?.name ?? '' }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Leave',
+          text: t('leave'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -249,7 +246,7 @@ export default function GroupDetailScreen() {
               router.replace('/');
             } catch (error: any) {
               console.error('Failed to leave group:', error);
-              Alert.alert('Error', error?.message || 'Failed to leave group');
+              Alert.alert(t('error'), error?.message || t('leaveGroupFailed'));
             }
           },
         },
@@ -326,7 +323,7 @@ export default function GroupDetailScreen() {
             <LivePulse event={event} />
             <View style={styles.categoryBadge}>
               <View style={[styles.categoryDot, { backgroundColor: category?.color || '#999' }]} />
-              <Text style={styles.categoryText}>{category?.name || 'Uncategorized'}</Text>
+              <Text style={styles.categoryText}>{category?.name || t('uncategorized')}</Text>
             </View>
           </View>
         </View>
@@ -337,7 +334,7 @@ export default function GroupDetailScreen() {
   if (!group) {
     return (
       <View style={styles.container}>
-        <Text>Group not found</Text>
+        <Text>{t('groupNotFound')}</Text>
       </View>
     );
   }
@@ -385,7 +382,7 @@ export default function GroupDetailScreen() {
           >
             <Users size={16} color="#666" />
             <Text style={styles.groupInfoText}>
-              {members.length} {members.length === 1 ? 'member' : 'members'}
+              {members.length} {members.length === 1 ? t('member') : t('members')}
             </Text>
           </TouchableOpacity>
           {isAdmin && (
@@ -394,7 +391,7 @@ export default function GroupDetailScreen() {
               onPress={() => router.push(`/group/${id}/invite` as any)}
             >
               <UserPlus size={16} color="#007AFF" />
-              <Text style={styles.inviteButtonText}>Invite</Text>
+              <Text style={styles.inviteButtonText}>{t('invite')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -410,7 +407,7 @@ export default function GroupDetailScreen() {
           activeOpacity={0.7}
         >
           <Calendar size={16} color={activeTab === 'events' ? '#007AFF' : '#999'} />
-          <Text style={[styles.tabText, activeTab === 'events' && styles.tabTextActive]}>Events</Text>
+          <Text style={[styles.tabText, activeTab === 'events' && styles.tabTextActive]}>{t('eventsTab')}</Text>
           {groupAnnouncements.length > 0 && (
             <View style={styles.tabBadge}>
               <Text style={styles.tabBadgeText}>{groupAnnouncements.length}</Text>
@@ -423,7 +420,7 @@ export default function GroupDetailScreen() {
           activeOpacity={0.7}
         >
           <Megaphone size={16} color={activeTab === 'announcements' ? '#007AFF' : '#999'} />
-          <Text style={[styles.tabText, activeTab === 'announcements' && styles.tabTextActive]}>Announcements</Text>
+          <Text style={[styles.tabText, activeTab === 'announcements' && styles.tabTextActive]}>{t('announcementsTab')}</Text>
           {groupAnnouncements.length > 0 && (
             <View style={[styles.tabBadge, activeTab === 'announcements' && styles.tabBadgeActive]}>
               <Text style={[styles.tabBadgeText, activeTab === 'announcements' && styles.tabBadgeTextActive]}>{groupAnnouncements.length}</Text>
@@ -449,8 +446,8 @@ export default function GroupDetailScreen() {
                 <View style={styles.pinnedContent}>
                   <View style={styles.pinnedHeader}>
                     <Megaphone size={14} color="#007AFF" />
-                    <Text style={styles.pinnedLabel}>PINNED ANNOUNCEMENT</Text>
-                    <Text style={styles.pinnedTime}>{formatRelative(activeAnnouncement.createdAt)}</Text>
+                    <Text style={styles.pinnedLabel}>{t('pinnedAnnouncement')}</Text>
+                    <Text style={styles.pinnedTime}>{formatRelative(activeAnnouncement.createdAt, t, locale)}</Text>
                   </View>
                   <Text style={styles.pinnedTitle} numberOfLines={1}>{activeAnnouncement.title}</Text>
                   <Text style={styles.pinnedBody} numberOfLines={2}>{activeAnnouncement.body}</Text>
@@ -458,10 +455,10 @@ export default function GroupDetailScreen() {
                     <View style={styles.pinnedExpiry}>
                       <Clock size={11} color={activeAnnouncement.durationHours === 0 ? '#8E8E93' : '#FF9500'} />
                       <Text style={[styles.pinnedExpiryText, activeAnnouncement.durationHours === 0 ? styles.pinnedExpiryNever : styles.pinnedExpiryTimed]}>
-                        {activeAnnouncement.durationHours === 0 ? DURATION_LABELS[0] : formatExpiry(activeAnnouncement.expiresAt!)}
+                        {activeAnnouncement.durationHours === 0 ? t('neverExpires') : formatExpiry(activeAnnouncement.expiresAt!, t)}
                       </Text>
                     </View>
-                    <Text style={styles.pinnedMore}>Tap to view all</Text>
+                    <Text style={styles.pinnedMore}>{t('tapToViewAll')}</Text>
                   </View>
                 </View>
               </TouchableOpacity>
@@ -470,11 +467,9 @@ export default function GroupDetailScreen() {
             {Object.keys(groupedEvents).length === 0 ? (
               <View style={styles.emptyState}>
                 <Calendar size={64} color="#CCC" strokeWidth={1.5} />
-                <Text style={styles.emptyTitle}>No Events Yet</Text>
+                <Text style={styles.emptyTitle}>{t('noEventsYet')}</Text>
                 <Text style={styles.emptySubtitle}>
-                  {isAdmin 
-                    ? 'Create your first event to get started' 
-                    : 'No events have been created yet'}
+                  {isAdmin ? t('createFirstEvent') : t('noEventsCreated')}
                 </Text>
               </View>
             ) : (
@@ -491,11 +486,9 @@ export default function GroupDetailScreen() {
             {groupAnnouncements.length === 0 ? (
               <View style={styles.emptyState}>
                 <Megaphone size={64} color="#CCC" strokeWidth={1.5} />
-                <Text style={styles.emptyTitle}>No Announcements</Text>
+                <Text style={styles.emptyTitle}>{t('noAnnouncements')}</Text>
                 <Text style={styles.emptySubtitle}>
-                  {isAdmin
-                    ? 'Post an announcement to keep your group informed.'
-                    : 'Check back later for updates from the admins.'}
+                  {isAdmin ? t('postFirstAnnouncement') : t('checkBackLater')}
                 </Text>
               </View>
             ) : (
@@ -539,12 +532,12 @@ export default function GroupDetailScreen() {
                         </View>
                         <Text style={styles.annAuthorName}>{a.createdByName}</Text>
                         <Text style={styles.annDot}>·</Text>
-                        <Text style={styles.annTime}>{formatRelative(a.createdAt)}</Text>
+                        <Text style={styles.annTime}>{formatRelative(a.createdAt, t, locale)}</Text>
                       </View>
                       <View style={[styles.annExpiry, a.durationHours === 0 ? styles.annExpiryNever : styles.annExpiryTimed]}>
                         <Clock size={12} color={a.durationHours === 0 ? '#8E8E93' : '#FF9500'} />
                         <Text style={[styles.annExpiryText, a.durationHours === 0 ? styles.annExpiryTextNever : styles.annExpiryTextTimed]}>
-                          {a.durationHours === 0 ? DURATION_LABELS[0] : formatExpiry(a.expiresAt!)}
+                          {a.durationHours === 0 ? t('neverExpires') : formatExpiry(a.expiresAt!, t)}
                         </Text>
                       </View>
                     </View>

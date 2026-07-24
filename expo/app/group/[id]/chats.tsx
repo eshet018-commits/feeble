@@ -16,18 +16,20 @@ import {
 
 import { useGroups } from '@/contexts/GroupContext';
 import { useChats } from '@/contexts/ChatContext';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { TranslationKey } from '@/constants/translations';
 import { Chat, ChatVisibility } from '@/types/event';
 
-const VISIBILITY_OPTIONS: { value: ChatVisibility; label: string; icon: typeof Eye; description: string }[] = [
-  { value: 'open', label: 'Open', icon: Eye, description: 'Everyone can view and type' },
-  { value: 'readonly', label: 'Read-Only', icon: MessageSquareX, description: 'Everyone can view, only admins can type' },
-  { value: 'admin-only', label: 'Admin Only', icon: EyeOff, description: 'Only admins can view and type' },
+const VISIBILITY_OPTIONS: { value: ChatVisibility; labelKey: TranslationKey; icon: typeof Eye; descriptionKey: TranslationKey }[] = [
+  { value: 'open', labelKey: 'visOpen', icon: Eye, descriptionKey: 'visOpenDesc' },
+  { value: 'readonly', labelKey: 'visReadonly', icon: MessageSquareX, descriptionKey: 'visReadonlyDesc' },
+  { value: 'admin-only', labelKey: 'visAdminOnly', icon: EyeOff, descriptionKey: 'visAdminOnlyDesc' },
 ];
 
-const VISIBILITY_LABELS: Record<ChatVisibility, string> = {
-  'open': 'Open',
-  'admin-only': 'Admin Only',
-  'readonly': 'Read-Only',
+const VISIBILITY_LABEL_KEYS: Record<ChatVisibility, TranslationKey> = {
+  'open': 'visOpen',
+  'admin-only': 'visAdminOnly',
+  'readonly': 'visReadonly',
 };
 
 const VISIBILITY_COLORS: Record<ChatVisibility, string> = {
@@ -50,6 +52,7 @@ export default function ChatsScreen() {
 
   const group = getGroupById(id!);
   const isAdmin = isGroupAdmin(id!);
+  const { t, locale } = useLanguage();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newChatName, setNewChatName] = useState('');
@@ -73,7 +76,7 @@ export default function ChatsScreen() {
   if (!group) {
     return (
       <View style={styles.container}>
-        <Text>Group not found</Text>
+        <Text>{t('groupNotFound')}</Text>
       </View>
     );
   }
@@ -81,13 +84,11 @@ export default function ChatsScreen() {
   if (!group.chatEnabled) {
     return (
       <View style={styles.container}>
-        <Stack.Screen options={{ title: 'Chats' }} />
+        <Stack.Screen options={{ title: t('titleChats') }} />
         <View style={styles.disabledState}>
           <Lock size={48} color="#CCC" strokeWidth={1.5} />
-          <Text style={styles.disabledTitle}>Chat is Disabled</Text>
-          <Text style={styles.disabledSubtitle}>
-            The group admin has not enabled chat for this group yet.
-          </Text>
+          <Text style={styles.disabledTitle}>{t('chatDisabled')}</Text>
+          <Text style={styles.disabledSubtitle}>{t('chatDisabledSub')}</Text>
         </View>
       </View>
     );
@@ -96,7 +97,7 @@ export default function ChatsScreen() {
   const handleCreateChat = async () => {
     const name = newChatName.trim();
     if (!name) {
-      Alert.alert('Error', 'Please enter a chat name');
+      Alert.alert(t('error'), t('enterChatName'));
       return;
     }
     setIsCreating(true);
@@ -106,7 +107,7 @@ export default function ChatsScreen() {
       setNewChatVisibility('open');
       setShowCreateModal(false);
     } catch (error: any) {
-      Alert.alert('Error', error?.message || 'Failed to create chat');
+      Alert.alert(t('error'), error?.message || t('createChatFailed'));
     } finally {
       setIsCreating(false);
     }
@@ -114,18 +115,18 @@ export default function ChatsScreen() {
 
   const handleDeleteChat = (chat: Chat) => {
     Alert.alert(
-      'Delete Chat',
-      `Delete "${chat.name}" and all its messages? This cannot be undone.`,
+      t('deleteChatTitle'),
+      t('deleteChatConfirm', { name: chat.name }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Delete',
+          text: t('delete'),
           style: 'destructive',
           onPress: async () => {
             try {
               await deleteChat(chat.id);
             } catch (error: any) {
-              Alert.alert('Error', error?.message || 'Failed to delete chat');
+              Alert.alert(t('error'), error?.message || t('deleteChatFailed'));
             }
           },
         },
@@ -144,7 +145,7 @@ export default function ChatsScreen() {
       await updateChat(editingChat.id, { visibility: editVisibility });
       setEditingChat(null);
     } catch (error: any) {
-      Alert.alert('Error', error?.message || 'Failed to update chat');
+      Alert.alert(t('error'), error?.message || t('updateChatFailed'));
     }
   };
 
@@ -155,17 +156,17 @@ export default function ChatsScreen() {
       (now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24)
     );
 
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    if (diffDays === 0) return t('today');
+    if (diffDays === 1) return t('yesterday');
+    if (diffDays < 7) return t('timeAgoD', { n: diffDays });
+    return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
   };
 
   return (
     <View style={styles.container}>
       <Stack.Screen
         options={{
-          title: 'Chats',
+          title: t('titleChats'),
           headerRight: () =>
             isAdmin ? (
               <TouchableOpacity
@@ -186,11 +187,9 @@ export default function ChatsScreen() {
         {visibleChats.length === 0 ? (
           <View style={styles.emptyState}>
             <MessageCircle size={48} color="#CCC" strokeWidth={1.5} />
-            <Text style={styles.emptyTitle}>No Chats Yet</Text>
+            <Text style={styles.emptyTitle}>{t('noChatsYet')}</Text>
             <Text style={styles.emptySubtitle}>
-              {isAdmin
-                ? 'Create a chat to start the conversation'
-                : 'No chats have been created yet'}
+              {isAdmin ? t('createChatHint') : t('noChatsCreated')}
             </Text>
           </View>
         ) : (
@@ -226,19 +225,19 @@ export default function ChatsScreen() {
                     <Text style={styles.chatName}>{chat.name}</Text>
                     <View style={[styles.visibilityBadge, { backgroundColor: visibilityColor + '20' }]}>
                       <Text style={[styles.visibilityBadgeText, { color: visibilityColor }]}>
-                        {VISIBILITY_LABELS[chat.visibility]}
+                        {t(VISIBILITY_LABEL_KEYS[chat.visibility])}
                       </Text>
                     </View>
                     {isReadonlyForUser && (
                       <View style={[styles.visibilityBadge, { backgroundColor: '#FF950020' }]}>
                         <Text style={[styles.visibilityBadgeText, { color: '#FF9500' }]}>
-                          View Only
+                          {t('viewOnly')}
                         </Text>
                       </View>
                     )}
                   </View>
                   <Text style={styles.chatMeta}>
-                    Created {formatDate(chat.createdAt)}
+                    {t('createdOn', { date: formatDate(chat.createdAt) })}
                   </Text>
                 </View>
                 {isAdmin && (
@@ -248,7 +247,7 @@ export default function ChatsScreen() {
                       style={styles.editVisButton}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <Text style={styles.editVisButtonText}>Edit</Text>
+                      <Text style={styles.editVisButtonText}>{t('edit')}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => handleDeleteChat(chat)}
@@ -282,12 +281,12 @@ export default function ChatsScreen() {
             onPress={() => setShowCreateModal(false)}
           />
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>New Chat</Text>
+            <Text style={styles.modalTitle}>{t('newChat')}</Text>
             <TextInput
               style={styles.modalInput}
               value={newChatName}
               onChangeText={setNewChatName}
-              placeholder="Chat name (e.g. General, Planning)"
+              placeholder={t('chatNamePh')}
               placeholderTextColor="#999"
               autoFocus
               maxLength={40}
@@ -295,7 +294,7 @@ export default function ChatsScreen() {
               onSubmitEditing={handleCreateChat}
             />
 
-            <Text style={styles.sectionLabel}>Visibility</Text>
+            <Text style={styles.sectionLabel}>{t('visibility')}</Text>
             <View style={styles.visibilityOptions}>
               {VISIBILITY_OPTIONS.map((opt) => {
                 const Icon = opt.icon;
@@ -314,9 +313,9 @@ export default function ChatsScreen() {
                     <Icon size={18} color={isSelected ? color : '#999'} />
                     <View style={styles.visibilityOptionText}>
                       <Text style={[styles.visibilityOptionLabel, isSelected && { color, fontWeight: '600' as const }]}>
-                        {opt.label}
+                        {t(opt.labelKey)}
                       </Text>
-                      <Text style={styles.visibilityOptionDesc}>{opt.description}</Text>
+                      <Text style={styles.visibilityOptionDesc}>{t(opt.descriptionKey)}</Text>
                     </View>
                   </TouchableOpacity>
                 );
@@ -332,7 +331,7 @@ export default function ChatsScreen() {
                   setNewChatVisibility('open');
                 }}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
@@ -343,7 +342,7 @@ export default function ChatsScreen() {
                 disabled={!newChatName.trim() || isCreating}
               >
                 <Text style={styles.createButtonText}>
-                  {isCreating ? 'Creating...' : 'Create'}
+                  {isCreating ? t('creating') : t('create')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -365,12 +364,12 @@ export default function ChatsScreen() {
             onPress={() => setEditingChat(null)}
           />
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Edit Chat</Text>
+            <Text style={styles.modalTitle}>{t('editChat')}</Text>
             {editingChat && (
               <Text style={styles.editChatName}>{editingChat.name}</Text>
             )}
 
-            <Text style={styles.sectionLabel}>Visibility</Text>
+            <Text style={styles.sectionLabel}>{t('visibility')}</Text>
             <View style={styles.visibilityOptions}>
               {VISIBILITY_OPTIONS.map((opt) => {
                 const Icon = opt.icon;
@@ -389,9 +388,9 @@ export default function ChatsScreen() {
                     <Icon size={18} color={isSelected ? color : '#999'} />
                     <View style={styles.visibilityOptionText}>
                       <Text style={[styles.visibilityOptionLabel, isSelected && { color, fontWeight: '600' as const }]}>
-                        {opt.label}
+                        {t(opt.labelKey)}
                       </Text>
-                      <Text style={styles.visibilityOptionDesc}>{opt.description}</Text>
+                      <Text style={styles.visibilityOptionDesc}>{t(opt.descriptionKey)}</Text>
                     </View>
                   </TouchableOpacity>
                 );
@@ -403,13 +402,13 @@ export default function ChatsScreen() {
                 style={styles.cancelButton}
                 onPress={() => setEditingChat(null)}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.saveButton}
                 onPress={handleSaveVisibility}
               >
-                <Text style={styles.saveButtonText}>Save</Text>
+                <Text style={styles.saveButtonText}>{t('save')}</Text>
               </TouchableOpacity>
             </View>
           </View>

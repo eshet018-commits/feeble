@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useEvents } from '@/contexts/EventContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { RepeatFrequency, EventReminder, EventLocation, PollOption } from '@/types/event';
 import { REMINDER_OPTIONS } from '@/constants/reminders';
 
@@ -21,6 +22,14 @@ export default function EditEventScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { events, updateEvent, categories, addCategory, getPoll, createPoll, updatePoll, removePoll, subscribeToPoll } = useEvents();
+  const { t, locale } = useLanguage();
+
+  const reminderLabel = (minutes: number): string => {
+    if (minutes === 0) return t('atTimeOfEvent');
+    if (minutes < 60) return t('minutesBefore', { n: minutes });
+    if (minutes < 1440) return t('hoursBefore', { n: Math.floor(minutes / 60) });
+    return t('daysBefore', { n: Math.floor(minutes / 1440) });
+  };
 
   const event = useMemo(() => {
     return events.find((e) => e.id === id);
@@ -95,16 +104,16 @@ export default function EditEventScreen() {
   if (!event) {
     return (
       <View style={styles.container}>
-        <Text style={styles.errorText}>Event not found</Text>
+        <Text style={styles.errorText}>{t('eventNotFound')}</Text>
       </View>
     );
   }
 
   const repeatOptions: { label: string; value: RepeatFrequency }[] = [
-    { label: 'Never', value: 'none' },
-    { label: 'Daily', value: 'daily' },
-    { label: 'Weekly', value: 'weekly' },
-    { label: 'Monthly', value: 'monthly' },
+    { label: t('never'), value: 'none' },
+    { label: t('daily'), value: 'daily' },
+    { label: t('weekly'), value: 'weekly' },
+    { label: t('monthly'), value: 'monthly' },
   ];
 
   const colorOptions = [
@@ -115,7 +124,7 @@ export default function EditEventScreen() {
 
   const handleSave = async () => {
     if (!title.trim()) {
-      Alert.alert('Error', 'Please enter a title');
+      Alert.alert(t('error'), t('enterTitle'));
       return;
     }
 
@@ -171,11 +180,11 @@ export default function EditEventScreen() {
         location,
       });
 
-      Alert.alert('Success', 'Event updated successfully', [
+      Alert.alert(t('success'), t('eventUpdated'), [
         { text: 'OK', onPress: () => router.back() }
       ]);
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to update event');
+      Alert.alert(t('error'), error.message || t('eventUpdateFailed'));
     }
   };
 
@@ -189,7 +198,7 @@ export default function EditEventScreen() {
 
   const handleCreateCustomCategory = async () => {
     if (!customCategoryName.trim()) {
-      Alert.alert('Error', 'Please enter a category name');
+      Alert.alert(t('error'), t('enterCategoryName'));
       return;
     }
 
@@ -268,7 +277,7 @@ export default function EditEventScreen() {
   };
 
   const formatDate = (date: Date) => {
-    return date.toLocaleDateString('en-US', {
+    return date.toLocaleDateString(locale, {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -276,7 +285,7 @@ export default function EditEventScreen() {
   };
 
   const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('en-US', {
+    return date.toLocaleTimeString(locale, {
       hour: 'numeric',
       minute: '2-digit',
     });
@@ -284,12 +293,12 @@ export default function EditEventScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: 'Edit Event' }} />
+      <Stack.Screen options={{ title: t('titleEditEvent') }} />
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         <View style={styles.section}>
           <TextInput
             style={styles.titleInput}
-            placeholder="Event Title"
+            placeholder={t('eventTitlePh')}
             placeholderTextColor="#999"
             value={title}
             onChangeText={setTitle}
@@ -299,7 +308,7 @@ export default function EditEventScreen() {
         <View style={styles.section}>
           <TextInput
             style={styles.descriptionInput}
-            placeholder="Add description..."
+            placeholder={t('addDescriptionPh')}
             placeholderTextColor="#999"
             value={description}
             onChangeText={setDescription}
@@ -311,7 +320,7 @@ export default function EditEventScreen() {
         <View style={styles.section}>
           <View style={styles.row}>
             <Calendar size={20} color="#007AFF" />
-            <Text style={styles.label}>Start</Text>
+            <Text style={styles.label}>{t('start')}</Text>
           </View>
           <View style={styles.dateTimeRow}>
             <TouchableOpacity
@@ -334,7 +343,7 @@ export default function EditEventScreen() {
         <View style={styles.section}>
           <View style={styles.row}>
             <Clock size={20} color="#007AFF" />
-            <Text style={styles.label}>End</Text>
+            <Text style={styles.label}>{t('end')}</Text>
           </View>
           <View style={styles.dateTimeRow}>
             <TouchableOpacity
@@ -356,7 +365,7 @@ export default function EditEventScreen() {
 
         <View style={styles.section}>
           <View style={styles.switchRow}>
-            <Text style={styles.label}>All Day</Text>
+            <Text style={styles.label}>{t('allDay')}</Text>
             <Switch
               value={allDay}
               onValueChange={setAllDay}
@@ -369,7 +378,7 @@ export default function EditEventScreen() {
         <View style={styles.section}>
           <View style={styles.row}>
             <Repeat size={20} color="#007AFF" />
-            <Text style={styles.label}>Repeat</Text>
+            <Text style={styles.label}>{t('repeat')}</Text>
           </View>
           <View style={styles.optionsGrid}>
             {repeatOptions.map((option) => (
@@ -407,7 +416,7 @@ export default function EditEventScreen() {
         <View style={styles.section}>
           <View style={styles.row}>
             <Tag size={20} color="#007AFF" />
-            <Text style={styles.label}>Category</Text>
+            <Text style={styles.label}>{t('category')}</Text>
           </View>
           <View style={styles.categoryGrid}>
             {categories.map((category) => (
@@ -440,7 +449,7 @@ export default function EditEventScreen() {
               onPress={() => setShowCustomCategoryModal(true)}
             >
               <Plus size={16} color="#007AFF" />
-              <Text style={styles.addCategoryText}>Custom</Text>
+              <Text style={styles.addCategoryText}>{t('custom')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -448,12 +457,12 @@ export default function EditEventScreen() {
         <View style={styles.section}>
           <View style={styles.row}>
             <MapPin size={20} color="#007AFF" />
-            <Text style={styles.label}>Location (Optional)</Text>
+            <Text style={styles.label}>{t('locationOptional')}</Text>
           </View>
           <View>
             <TextInput
               style={styles.locationInput}
-              placeholder="Search for a location..."
+              placeholder={t('searchLocationPh')}
               placeholderTextColor="#999"
               value={locationAddress}
               onChangeText={handleLocationSearch}
@@ -487,14 +496,14 @@ export default function EditEventScreen() {
             )}
           </View>
           {isGeocodingLocation && (
-            <Text style={styles.geocodingText}>Searching...</Text>
+            <Text style={styles.geocodingText}>{t('searching')}</Text>
           )}
           {locationCoords && (
             <View style={styles.locationConfirm}>
               <MapPin size={14} color="#10B981" />
-              <Text style={styles.locationConfirmText}>Location selected</Text>
+              <Text style={styles.locationConfirmText}>{t('locationSelected')}</Text>
               <TouchableOpacity onPress={handleClearLocation} style={styles.clearLocationButton}>
-                <Text style={styles.clearLocationText}>Clear</Text>
+                <Text style={styles.clearLocationText}>{t('clear')}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -503,7 +512,7 @@ export default function EditEventScreen() {
         <View style={styles.section}>
           <View style={styles.row}>
             <BarChart3 size={20} color="#007AFF" />
-            <Text style={styles.label}>Poll</Text>
+            <Text style={styles.label}>{t('poll')}</Text>
             <Switch
               value={pollEnabled}
               onValueChange={setPollEnabled}
@@ -516,7 +525,7 @@ export default function EditEventScreen() {
             <View style={styles.pollContent}>
               <TextInput
                 style={styles.pollQuestionInput}
-                placeholder="Ask a question..."
+                placeholder={t('askQuestionPh')}
                 placeholderTextColor="#999"
                 value={pollQuestion}
                 onChangeText={setPollQuestion}
@@ -554,7 +563,7 @@ export default function EditEventScreen() {
                   onPress={() => setPollOptions([...pollOptions, ''])}
                 >
                   <Plus size={16} color="#007AFF" />
-                  <Text style={styles.addPollOptionText}>Add option</Text>
+                  <Text style={styles.addPollOptionText}>{t('addOption')}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -564,7 +573,7 @@ export default function EditEventScreen() {
         <View style={styles.section}>
           <View style={styles.row}>
             <Bell size={20} color="#007AFF" />
-            <Text style={styles.label}>Reminders</Text>
+            <Text style={styles.label}>{t('reminders')}</Text>
           </View>
           <View style={styles.reminderList}>
             {REMINDER_OPTIONS.map((option) => (
@@ -583,7 +592,7 @@ export default function EditEventScreen() {
                       styles.reminderButtonTextActive,
                   ]}
                 >
-                  {option.label}
+                  {reminderLabel(option.minutes)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -597,7 +606,7 @@ export default function EditEventScreen() {
           onPress={handleSave}
           disabled={!title.trim()}
         >
-          <Text style={styles.saveButtonText}>Save Changes</Text>
+          <Text style={styles.saveButtonText}>{t('saveChanges')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -605,7 +614,7 @@ export default function EditEventScreen() {
         <View style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
-              <Text style={styles.pickerDone}>Done</Text>
+              <Text style={styles.pickerDone}>{t('done')}</Text>
             </TouchableOpacity>
           </View>
           <DateTimePicker
@@ -625,7 +634,7 @@ export default function EditEventScreen() {
         <View style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <TouchableOpacity onPress={() => setShowStartTimePicker(false)}>
-              <Text style={styles.pickerDone}>Done</Text>
+              <Text style={styles.pickerDone}>{t('done')}</Text>
             </TouchableOpacity>
           </View>
           <DateTimePicker
@@ -645,7 +654,7 @@ export default function EditEventScreen() {
         <View style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
-              <Text style={styles.pickerDone}>Done</Text>
+              <Text style={styles.pickerDone}>{t('done')}</Text>
             </TouchableOpacity>
           </View>
           <DateTimePicker
@@ -665,7 +674,7 @@ export default function EditEventScreen() {
         <View style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <TouchableOpacity onPress={() => setShowEndTimePicker(false)}>
-              <Text style={styles.pickerDone}>Done</Text>
+              <Text style={styles.pickerDone}>{t('done')}</Text>
             </TouchableOpacity>
           </View>
           <DateTimePicker
@@ -685,7 +694,7 @@ export default function EditEventScreen() {
         <View style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <TouchableOpacity onPress={() => setShowRepeatEndDatePicker(false)}>
-              <Text style={styles.pickerDone}>Done</Text>
+              <Text style={styles.pickerDone}>{t('done')}</Text>
             </TouchableOpacity>
           </View>
           <DateTimePicker
@@ -704,16 +713,16 @@ export default function EditEventScreen() {
       {showCustomCategoryModal && (
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Create Custom Category</Text>
+            <Text style={styles.modalTitle}>{t('createCustomCategory')}</Text>
             <TextInput
               style={styles.categoryNameInput}
-              placeholder="Category name"
+              placeholder={t('categoryNamePh')}
               placeholderTextColor="#999"
               value={customCategoryName}
               onChangeText={setCustomCategoryName}
               autoFocus
             />
-            <Text style={styles.colorLabel}>Select Color</Text>
+            <Text style={styles.colorLabel}>{t('selectColor')}</Text>
             <View style={styles.colorGrid}>
               {colorOptions.map((color) => (
                 <TouchableOpacity
@@ -735,7 +744,7 @@ export default function EditEventScreen() {
                   setCustomCategoryName('');
                 }}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={styles.modalCancelText}>{t('cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
@@ -745,7 +754,7 @@ export default function EditEventScreen() {
                 onPress={handleCreateCustomCategory}
                 disabled={!customCategoryName.trim()}
               >
-                <Text style={styles.modalCreateText}>Create</Text>
+                <Text style={styles.modalCreateText}>{t('create')}</Text>
               </TouchableOpacity>
             </View>
           </View>

@@ -15,11 +15,13 @@ import {
 } from 'react-native';
 
 import { useGroups } from '@/contexts/GroupContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function GroupSettingsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getGroupById, updateGroup, deleteGroup, isGroupAdmin, toggleChatEnabled } = useGroups();
+  const { t } = useLanguage();
 
   const group = getGroupById(id!);
   const isAdmin = isGroupAdmin(id!);
@@ -43,19 +45,19 @@ export default function GroupSettingsScreen() {
   if (!group || !isAdmin) {
     return (
       <View style={styles.container}>
-        <Text>Access denied</Text>
+        <Text>{t('accessDenied')}</Text>
       </View>
     );
   }
 
   const handleSave = async () => {
     if (!name.trim()) {
-      Alert.alert('Error', 'Group name cannot be empty');
+      Alert.alert(t('error'), t('groupNameEmpty'));
       return;
     }
 
     if (!inviteCode.trim()) {
-      Alert.alert('Error', 'Invite code cannot be empty');
+      Alert.alert(t('error'), t('inviteCodeEmpty'));
       return;
     }
 
@@ -66,13 +68,13 @@ export default function GroupSettingsScreen() {
         description: description.trim() || undefined,
         inviteCode: inviteCode.trim(),
       });
-      Alert.alert('Success', 'Group settings updated', [
-        { text: 'OK', onPress: () => router.back() },
+      Alert.alert(t('success'), t('settingsUpdated'), [
+        { text: t('ok'), onPress: () => router.back() },
       ]);
     } catch (error: any) {
       console.error('Failed to update group:', error);
-      const errorMessage = error?.message || 'Failed to update group settings';
-      Alert.alert('Error', errorMessage);
+      const errorMessage = error?.message || t('settingsUpdateFailed');
+      Alert.alert(t('error'), errorMessage);
     } finally {
       setIsSaving(false);
     }
@@ -80,12 +82,12 @@ export default function GroupSettingsScreen() {
 
   const handleDeleteGroup = () => {
     Alert.alert(
-      'Delete Group',
-      `Are you sure you want to delete "${group.name}"? This will also delete all events in this group. This action cannot be undone.`,
+      t('deleteGroup'),
+      t('deleteGroupConfirm', { name: group.name }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Delete',
+          text: t('delete'),
           style: 'destructive',
           onPress: async () => {
             await deleteGroup(id!);
@@ -108,7 +110,7 @@ export default function GroupSettingsScreen() {
     >
       <Stack.Screen
         options={{
-          title: 'Group Settings',
+          title: t('titleGroupSettings'),
           headerRight: () => (
             <TouchableOpacity
               onPress={handleSave}
@@ -121,7 +123,7 @@ export default function GroupSettingsScreen() {
                   (!hasChanges || isSaving) && styles.saveButtonTextDisabled,
                 ]}
               >
-                {isSaving ? 'Saving...' : 'Save'}
+                {isSaving ? t('saving') : t('save')}
               </Text>
             </TouchableOpacity>
           ),
@@ -134,27 +136,27 @@ export default function GroupSettingsScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Group Information</Text>
+          <Text style={styles.sectionTitle}>{t('groupInformation')}</Text>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Group Name</Text>
+            <Text style={styles.label}>{t('groupName')}</Text>
             <TextInput
               style={styles.input}
               value={name}
               onChangeText={setName}
-              placeholder="Enter group name"
+              placeholder={t('enterGroupName')}
               placeholderTextColor="#999"
               maxLength={50}
             />
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Description (Optional)</Text>
+            <Text style={styles.label}>{t('descriptionOptional')}</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
               value={description}
               onChangeText={setDescription}
-              placeholder="Add a description for this group"
+              placeholder={t('addGroupDescriptionPh')}
               placeholderTextColor="#999"
               multiline
               numberOfLines={4}
@@ -164,34 +166,30 @@ export default function GroupSettingsScreen() {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Invite Code</Text>
+            <Text style={styles.label}>{t('inviteCodeLabel')}</Text>
             <TextInput
               style={styles.input}
               value={inviteCode}
               onChangeText={setInviteCode}
-              placeholder="Enter custom invite code"
+              placeholder={t('enterCustomInviteCode')}
               placeholderTextColor="#999"
               autoCapitalize="characters"
               autoCorrect={false}
               maxLength={20}
             />
-            <Text style={styles.helperText}>
-              Share this code with people to invite them to your group
-            </Text>
+            <Text style={styles.helperText}>{t('shareCodeHelper')}</Text>
           </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Chat</Text>
+          <Text style={styles.sectionTitle}>{t('chatSection')}</Text>
 
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
               <MessageCircle size={22} color="#007AFF" />
               <View style={styles.settingTextContainer}>
-                <Text style={styles.settingLabel}>Group Chat</Text>
-                <Text style={styles.settingDescription}>
-                  Allow members to send messages in real-time
-                </Text>
+                <Text style={styles.settingLabel}>{t('groupChat')}</Text>
+                <Text style={styles.settingDescription}>{t('groupChatDesc')}</Text>
               </View>
             </View>
             <Switch
@@ -203,7 +201,7 @@ export default function GroupSettingsScreen() {
                   await toggleChatEnabled(id!, value);
                 } catch (error: any) {
                   setChatEnabled(!value);
-                  Alert.alert('Error', error?.message || 'Failed to toggle chat');
+                  Alert.alert(t('error'), error?.message || t('toggleChatFailed'));
                 } finally {
                   setIsTogglingChat(false);
                 }
@@ -221,14 +219,14 @@ export default function GroupSettingsScreen() {
               activeOpacity={0.7}
             >
               <MessageCircle size={18} color="#007AFF" />
-              <Text style={styles.manageChatsText}>Manage Chats</Text>
+              <Text style={styles.manageChatsText}>{t('manageChats')}</Text>
               <ChevronRight size={18} color="#CCC" />
             </TouchableOpacity>
           )}
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Danger Zone</Text>
+          <Text style={styles.sectionTitle}>{t('dangerZone')}</Text>
 
           <TouchableOpacity
             style={styles.deleteButton}
@@ -236,13 +234,10 @@ export default function GroupSettingsScreen() {
             activeOpacity={0.7}
           >
             <Trash2 size={20} color="#FF3B30" />
-            <Text style={styles.deleteButtonText}>Delete Group</Text>
+            <Text style={styles.deleteButtonText}>{t('deleteGroup')}</Text>
           </TouchableOpacity>
 
-          <Text style={styles.deleteWarning}>
-            Deleting this group will permanently remove all events and member access.
-            This action cannot be undone.
-          </Text>
+          <Text style={styles.deleteWarning}>{t('deleteGroupWarning')}</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

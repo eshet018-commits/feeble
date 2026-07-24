@@ -10,6 +10,18 @@ import {
 
 const STORAGE_KEY = 'app_language';
 
+/** BCP-47 locale for date/time formatting per language */
+export const LOCALES: Record<LanguageCode, string> = {
+  en: 'en-US',
+  am: 'am-ET',
+  es: 'es-ES',
+  fr: 'fr-FR',
+  de: 'de-DE',
+  pt: 'pt-BR',
+  zh: 'zh-CN',
+  hi: 'hi-IN',
+};
+
 /**
  * Provides the selected app language and a `t()` translation function.
  * The choice is persisted so it sticks across app launches.
@@ -39,14 +51,22 @@ export const [LanguageProvider, useLanguage] = createContextHook(() => {
   }, []);
 
   const t = useCallback(
-    (key: TranslationKey): string => {
-      return TRANSLATIONS[language]?.[key] ?? TRANSLATIONS.en[key];
+    (key: TranslationKey, params?: Record<string, string | number>): string => {
+      let value = TRANSLATIONS[language]?.[key] ?? TRANSLATIONS.en[key];
+      if (params) {
+        Object.entries(params).forEach(([k, v]) => {
+          value = value.split(`{${k}}`).join(String(v));
+        });
+      }
+      return value;
     },
     [language],
   );
 
+  const locale = LOCALES[language];
+
   return useMemo(
-    () => ({ language, setLanguage, t, isLanguageLoaded, languages: LANGUAGES }),
-    [language, setLanguage, t, isLanguageLoaded],
+    () => ({ language, locale, setLanguage, t, isLanguageLoaded, languages: LANGUAGES }),
+    [language, locale, setLanguage, t, isLanguageLoaded],
   );
 });

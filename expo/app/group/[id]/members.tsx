@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 
 import { useGroups } from '@/contexts/GroupContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { Member } from '@/types/event';
 
 export default function GroupMembersScreen() {
@@ -23,6 +24,7 @@ export default function GroupMembersScreen() {
     promoteMember,
     demoteMember,
   } = useGroups();
+  const { t, locale } = useLanguage();
 
   const group = getGroupById(id!);
   const members = getMembersByGroupId(id!);
@@ -54,26 +56,26 @@ export default function GroupMembersScreen() {
   if (!group) {
     return (
       <View style={styles.container}>
-        <Text>Group not found</Text>
+        <Text>{t('groupNotFound')}</Text>
       </View>
     );
   }
 
   const handlePromoteMember = (member: Member) => {
     Alert.alert(
-      'Promote Member',
-      `Promote ${member.userName} to admin? They will be able to create events and manage members.`,
+      t('promoteMemberTitle'),
+      t('promoteConfirm', { name: member.userName }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Promote',
+          text: t('promote'),
           onPress: async () => {
             try {
               await promoteMember(id!, member.id);
-              Alert.alert('Success', `${member.userName} is now an admin`);
+              Alert.alert(t('success'), t('nowAdmin', { name: member.userName }));
             } catch (error: any) {
               console.error('Failed to promote member:', error);
-              Alert.alert('Error', error?.message || 'Failed to promote member');
+              Alert.alert(t('error'), error?.message || t('promoteFailed'));
             }
           },
         },
@@ -83,20 +85,20 @@ export default function GroupMembersScreen() {
 
   const handleDemoteMember = (member: Member) => {
     Alert.alert(
-      'Demote Admin',
-      `Remove admin privileges from ${member.userName}? They will become a regular member.`,
+      t('demoteAdminTitle'),
+      t('demoteConfirm', { name: member.userName }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Demote',
+          text: t('demote'),
           style: 'destructive',
           onPress: async () => {
             try {
               await demoteMember(id!, member.id);
-              Alert.alert('Success', `${member.userName} is now a regular member`);
+              Alert.alert(t('success'), t('nowMember', { name: member.userName }));
             } catch (error: any) {
               console.error('Failed to demote member:', error);
-              Alert.alert('Error', error?.message || 'Failed to demote member');
+              Alert.alert(t('error'), error?.message || t('demoteFailed'));
             }
           },
         },
@@ -121,21 +123,23 @@ export default function GroupMembersScreen() {
               {isCreator && (
                 <View style={styles.creatorBadge}>
                   <Crown size={12} color="#FFD700" />
-                  <Text style={styles.badgeText}>Creator</Text>
+                  <Text style={styles.badgeText}>{t('creator')}</Text>
                 </View>
               )}
               {isAdmin && !isCreator && (
                 <View style={styles.adminBadge}>
                   <Shield size={12} color="#007AFF" />
-                  <Text style={styles.badgeText}>Admin</Text>
+                  <Text style={styles.badgeText}>{t('admin')}</Text>
                 </View>
               )}
             </View>
             <Text style={styles.memberJoined}>
-              Joined {new Date(member.joinedAt).toLocaleDateString('en-US', { 
-                month: 'short', 
-                day: 'numeric',
-                year: 'numeric' 
+              {t('joinedOn', {
+                date: new Date(member.joinedAt).toLocaleDateString(locale, {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                }),
               })}
             </Text>
           </View>
@@ -156,7 +160,7 @@ export default function GroupMembersScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
-          title: 'Members',
+          title: t('membersTitle'),
         }}
       />
 
@@ -167,20 +171,20 @@ export default function GroupMembersScreen() {
       >
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>
-            {members.length} {members.length === 1 ? 'Member' : 'Members'}
+            {members.length} {members.length === 1 ? t('memberCap') : t('membersTitle')}
           </Text>
         </View>
 
         {creatorMember && (
           <View style={styles.section}>
-            <Text style={styles.sectionHeader}>Group Creator</Text>
+            <Text style={styles.sectionHeader}>{t('groupCreator')}</Text>
             {renderMemberCard(creatorMember, false, true, true)}
           </View>
         )}
 
         {adminMembers.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionHeader}>Admins</Text>
+            <Text style={styles.sectionHeader}>{t('admins')}</Text>
             {adminMembers.map(member => 
               renderMemberCard(
                 member, 
@@ -193,7 +197,7 @@ export default function GroupMembersScreen() {
 
         {regularMembers.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionHeader}>Members</Text>
+            <Text style={styles.sectionHeader}>{t('membersTitle')}</Text>
             {regularMembers.map(member => 
               renderMemberCard(
                 member, 
@@ -206,9 +210,7 @@ export default function GroupMembersScreen() {
 
         {userRole === 'viewer' && (
           <View style={styles.infoBox}>
-            <Text style={styles.infoText}>
-              Only admins can see full member details and manage permissions.
-            </Text>
+            <Text style={styles.infoText}>{t('viewerMembersInfo')}</Text>
           </View>
         )}
       </ScrollView>

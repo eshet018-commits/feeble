@@ -17,15 +17,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAnnouncements } from '@/contexts/AnnouncementContext';
 import { useGroups } from '@/contexts/GroupContext';
 import { useUser } from '@/contexts/UserContext';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { TranslationKey } from '@/constants/translations';
 import { AnnouncementDuration } from '@/types/event';
 
-const DURATION_OPTIONS: { label: string; value: AnnouncementDuration; hint: string }[] = [
-  { label: '6 hours', value: 6, hint: 'Good for quick reminders' },
-  { label: '1 day', value: 24, hint: 'Visible for a day' },
-  { label: '3 days', value: 72, hint: 'A few days of visibility' },
-  { label: '1 week', value: 168, hint: 'A full week' },
-  { label: '30 days', value: 720, hint: 'Long-lasting' },
-  { label: 'Never expires', value: 0, hint: 'Stays until deleted' },
+const DURATION_OPTIONS: { labelKey: TranslationKey; value: AnnouncementDuration; hintKey: TranslationKey }[] = [
+  { labelKey: 'dur6h', value: 6, hintKey: 'dur6hHint' },
+  { labelKey: 'dur1d', value: 24, hintKey: 'dur1dHint' },
+  { labelKey: 'dur3d', value: 72, hintKey: 'dur3dHint' },
+  { labelKey: 'dur1w', value: 168, hintKey: 'dur1wHint' },
+  { labelKey: 'dur30d', value: 720, hintKey: 'dur30dHint' },
+  { labelKey: 'neverExpires', value: 0, hintKey: 'durNeverHint' },
 ];
 
 export default function CreateAnnouncementScreen() {
@@ -34,6 +36,7 @@ export default function CreateAnnouncementScreen() {
   const { createAnnouncement, updateAnnouncement, isCreating, announcements } = useAnnouncements();
   const { getGroupById, isGroupAdmin } = useGroups();
   const { userId, userName } = useUser();
+  const { t } = useLanguage();
 
   const isEditing = Boolean(announcementId);
   const existing = announcementId
@@ -84,19 +87,19 @@ export default function CreateAnnouncementScreen() {
     return (
       <View style={styles.accessDenied}>
         <Megaphone size={48} color="#CCC" />
-        <Text style={styles.accessDeniedTitle}>Admins Only</Text>
-        <Text style={styles.accessDeniedText}>Only group admins can {isEditing ? 'edit' : 'create'} announcements.</Text>
+        <Text style={styles.accessDeniedTitle}>{t('adminsOnly')}</Text>
+        <Text style={styles.accessDeniedText}>{isEditing ? t('adminsOnlyEdit') : t('adminsOnlyCreate')}</Text>
       </View>
     );
   }
 
   const handleSubmit = async () => {
     if (!title.trim()) {
-      Alert.alert('Title required', 'Give your announcement a title.');
+      Alert.alert(t('titleRequired'), t('titleRequiredMsg'));
       return;
     }
     if (!body.trim()) {
-      Alert.alert('Message required', 'Write the message for your announcement.');
+      Alert.alert(t('messageRequired'), t('messageRequiredMsg'));
       return;
     }
     if (!userId || !id) return;
@@ -106,11 +109,11 @@ export default function CreateAnnouncementScreen() {
     if (pollEnabled) {
       const cleanOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
       if (!pollQuestion.trim()) {
-        Alert.alert('Poll question required', 'Add a question for your poll, or turn the poll off.');
+        Alert.alert(t('pollQuestionRequired'), t('pollQuestionRequiredMsg'));
         return;
       }
       if (cleanOptions.length < 2) {
-        Alert.alert('Need at least 2 options', 'A poll needs at least two choices.');
+        Alert.alert(t('pollNeedOptions'), t('pollNeedOptionsMsg'));
         return;
       }
       pollInput = { question: pollQuestion.trim(), options: cleanOptions };
@@ -136,7 +139,7 @@ export default function CreateAnnouncementScreen() {
       }
       router.replace(`/group/${id}` as any);
     } catch (e: any) {
-      Alert.alert('Error', e?.message || `Failed to ${isEditing ? 'update' : 'create'} announcement`);
+      Alert.alert(t('error'), e?.message || (isEditing ? t('announcementUpdateFailed') : t('announcementCreateFailed')));
     }
   };
 
@@ -158,26 +161,26 @@ export default function CreateAnnouncementScreen() {
             <Megaphone size={18} color="#007AFF" />
           )}
           <Text style={[styles.groupName, isEditing && { color: '#FF6B35' }]}>
-            {isEditing ? 'Editing announcement' : group?.name || 'Group'}
+            {isEditing ? t('editingAnnouncement') : group?.name || t('titleGroup')}
           </Text>
         </View>
 
-        <Text style={styles.label}>Title</Text>
+        <Text style={styles.label}>{t('titleLabel')}</Text>
         <TextInput
           style={styles.titleInput}
           value={title}
           onChangeText={setTitle}
-          placeholder="Announcement title"
+          placeholder={t('announcementTitlePh')}
           placeholderTextColor="#B0B0B0"
           maxLength={80}
         />
 
-        <Text style={styles.label}>Message</Text>
+        <Text style={styles.label}>{t('messageLabel')}</Text>
         <TextInput
           style={styles.bodyInput}
           value={body}
           onChangeText={setBody}
-          placeholder="Share an update with your group..."
+          placeholder={t('announcementBodyPh')}
           placeholderTextColor="#B0B0B0"
           multiline
           textAlignVertical="top"
@@ -185,11 +188,9 @@ export default function CreateAnnouncementScreen() {
 
         <View style={styles.sectionHeader}>
           <Clock size={16} color="#666" />
-          <Text style={styles.sectionTitle}>Visible for</Text>
+          <Text style={styles.sectionTitle}>{t('visibleFor')}</Text>
         </View>
-        <Text style={styles.sectionHint}>
-          Announcements appear at the top of the group page. After the duration they are deleted automatically.
-        </Text>
+        <Text style={styles.sectionHint}>{t('visibleForHint')}</Text>
 
         <View style={styles.durationGrid}>
           {DURATION_OPTIONS.map((opt) => {
@@ -204,11 +205,11 @@ export default function CreateAnnouncementScreen() {
                 <View style={styles.durationCardHeader}>
                   <View style={[styles.radio, selected && styles.radioSelected]} />
                   <Text style={[styles.durationLabel, selected && styles.durationLabelSelected]}>
-                    {opt.label}
+                    {t(opt.labelKey)}
                   </Text>
                 </View>
                 <Text style={[styles.durationHint, selected && styles.durationHintSelected]}>
-                  {opt.hint}
+                  {t(opt.hintKey)}
                 </Text>
               </TouchableOpacity>
             );
@@ -218,11 +219,9 @@ export default function CreateAnnouncementScreen() {
         {/* Poll builder */}
         <View style={styles.sectionHeader}>
           <BarChart3 size={16} color="#666" />
-          <Text style={styles.sectionTitle}>Poll</Text>
+          <Text style={styles.sectionTitle}>{t('poll')}</Text>
         </View>
-        <Text style={styles.sectionHint}>
-          Attach a poll so members can vote directly on this announcement.
-        </Text>
+        <Text style={styles.sectionHint}>{t('pollAttachHint')}</Text>
 
         <TouchableOpacity
           style={[styles.pollToggle, pollEnabled && styles.pollToggleActive]}
@@ -233,7 +232,7 @@ export default function CreateAnnouncementScreen() {
             {pollEnabled && <View style={styles.pollToggleDot} />}
           </View>
           <Text style={[styles.pollToggleLabel, pollEnabled && styles.pollToggleLabelActive]}>
-            {pollEnabled ? 'Poll attached' : 'Add a poll'}
+            {pollEnabled ? t('pollAttached') : t('addAPoll')}
           </Text>
         </TouchableOpacity>
 
@@ -243,18 +242,18 @@ export default function CreateAnnouncementScreen() {
               style={styles.pollQuestionInput}
               value={pollQuestion}
               onChangeText={setPollQuestion}
-              placeholder="Poll question"
+              placeholder={t('pollQuestionPh')}
               placeholderTextColor="#B0B0B0"
               maxLength={120}
             />
-            <Text style={styles.pollOptionsLabel}>Options</Text>
+            <Text style={styles.pollOptionsLabel}>{t('optionsLabel')}</Text>
             {pollOptions.map((opt, i) => (
               <View key={i} style={styles.pollOptionRow}>
                 <TextInput
                   style={styles.pollOptionInput}
                   value={opt}
                   onChangeText={(v) => updatePollOption(i, v)}
-                  placeholder={`Option ${i + 1}`}
+                  placeholder={t('optionN', { n: i + 1 })}
                   placeholderTextColor="#B0B0B0"
                   maxLength={80}
                 />
@@ -275,7 +274,7 @@ export default function CreateAnnouncementScreen() {
                 activeOpacity={0.7}
               >
                 <Plus size={16} color="#007AFF" />
-                <Text style={styles.addOptionText}>Add option</Text>
+                <Text style={styles.addOptionText}>{t('addOption')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -291,7 +290,7 @@ export default function CreateAnnouncementScreen() {
         >
           <Send size={18} color="#FFF" />
           <Text style={styles.submitText}>
-            {isCreating ? 'Saving...' : isEditing ? 'Save Changes' : 'Post Announcement'}
+            {isCreating ? t('saving') : isEditing ? t('saveChanges') : t('postAnnouncement')}
           </Text>
         </TouchableOpacity>
       </View>

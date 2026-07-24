@@ -21,6 +21,7 @@ import {
 import { useUser } from '@/contexts/UserContext';
 import { useGroups } from '@/contexts/GroupContext';
 import { useChats } from '@/contexts/ChatContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { ChatMessage, ChatFileAttachment, ChatReplyInfo, ChatSettings } from '@/types/event';
 import { setActiveChat as setGlobalActiveChat } from '@/utils/notifications';
 
@@ -32,6 +33,7 @@ export default function ChatRoomScreen() {
   }>();
   const { userId } = useUser();
   const { isGroupAdmin } = useGroups();
+  const { t, locale } = useLanguage();
   const {
     chats,
     subscribeToMessages,
@@ -107,7 +109,7 @@ export default function ChatRoomScreen() {
       setReplyTo(null);
     } catch (error: any) {
       console.error('Failed to send message:', error);
-      Alert.alert('Send failed', error?.message || 'Could not send your message. Please try again.');
+      Alert.alert(t('sendFailed'), error?.message || t('sendFailedMsg'));
     } finally {
       setIsSending(false);
     }
@@ -137,17 +139,17 @@ export default function ChatRoomScreen() {
       if (supported) {
         await Linking.openURL(attachment.url);
       } else {
-        Alert.alert('Cannot open file', 'No app is available to open this file type.');
+        Alert.alert(t('cannotOpenFile'), t('cannotOpenFileMsg'));
       }
     } catch (error: any) {
       console.error('Open attachment failed:', error);
-      Alert.alert('Could not open file', error?.message || 'Please try again.');
+      Alert.alert(t('couldNotOpenFile'), error?.message || t('tryAgain'));
     }
-  }, []);
+  }, [t]);
 
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr);
-    return date.toLocaleTimeString('en-US', {
+    return date.toLocaleTimeString(locale, {
       hour: 'numeric',
       minute: '2-digit',
     });
@@ -344,7 +346,7 @@ export default function ChatRoomScreen() {
                 isMine ? styles.replyButtonTextMine : styles.replyButtonTextTheirs,
               ]}
             >
-              Reply
+              {t('reply')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -355,7 +357,7 @@ export default function ChatRoomScreen() {
   if (!chat) {
     return (
       <View style={styles.container}>
-        <Stack.Screen options={{ title: 'Chat' }} />
+        <Stack.Screen options={{ title: t('titleChat') }} />
         <View style={styles.loadingState}>
           <ActivityIndicator size="large" color="#007AFF" />
         </View>
@@ -370,16 +372,14 @@ export default function ChatRoomScreen() {
         <Stack.Screen options={{ title: chat.name, headerLeft: () => null }} />
         <View style={styles.lockedState}>
           <EyeOff size={48} color="#FF3B30" strokeWidth={1.5} />
-          <Text style={styles.lockedTitle}>Admin Only</Text>
-          <Text style={styles.lockedSubtitle}>
-            This chat is restricted to group admins.
-          </Text>
+          <Text style={styles.lockedTitle}>{t('visAdminOnly')}</Text>
+          <Text style={styles.lockedSubtitle}>{t('adminOnlyChatSub')}</Text>
           <TouchableOpacity
             style={styles.lockedBackButton}
             onPress={() => router.back()}
           >
             <ArrowLeft size={18} color="#007AFF" />
-            <Text style={styles.lockedBackText}>Go Back</Text>
+            <Text style={styles.lockedBackText}>{t('goBack')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -418,16 +418,12 @@ export default function ChatRoomScreen() {
       {isReadonly && !isAdmin && (
         <View style={styles.readonlyBanner}>
           <MessageSquareX size={14} color="#FFF" />
-          <Text style={styles.readonlyBannerText}>
-            Read-only — only admins can send messages
-          </Text>
+          <Text style={styles.readonlyBannerText}>{t('readonlyBanner')}</Text>
         </View>
       )}
 
       <View style={styles.retentionBanner}>
-        <Text style={styles.retentionBannerText}>
-          Messages are kept for 7 days and then permanently deleted.
-        </Text>
+        <Text style={styles.retentionBannerText}>{t('retentionBanner')}</Text>
       </View>
 
       <FlatList
@@ -450,9 +446,7 @@ export default function ChatRoomScreen() {
             </View>
           ) : (
             <View style={styles.emptyMessages}>
-              <Text style={styles.emptyMessagesText}>
-                No messages yet. Say hello!
-              </Text>
+              <Text style={styles.emptyMessagesText}>{t('noMessagesYet')}</Text>
             </View>
           )
         }
@@ -466,7 +460,7 @@ export default function ChatRoomScreen() {
                 <CornerUpLeft size={16} color="#007AFF" />
                 <View style={styles.replyPreviewContent}>
                   <Text style={styles.replyPreviewAuthor} numberOfLines={1}>
-                    Replying to {replyTo.userName}
+                    {t('replyingTo', { name: replyTo.userName })}
                   </Text>
                   <Text style={styles.replyPreviewText}>
                     {replyTo.text}
@@ -486,7 +480,7 @@ export default function ChatRoomScreen() {
               style={styles.textInput}
               value={text}
               onChangeText={setText}
-              placeholder={'Type a message...'}
+              placeholder={t('typeMessage')}
               placeholderTextColor="#999"
               multiline
               maxLength={1000}
@@ -517,9 +511,7 @@ export default function ChatRoomScreen() {
       ) : (
         <View style={styles.inputBarLocked}>
           <Shield size={16} color="#999" />
-          <Text style={styles.inputBarLockedText}>
-            Only admins can send messages in this chat
-          </Text>
+          <Text style={styles.inputBarLockedText}>{t('onlyAdminsSend')}</Text>
         </View>
       )}
 
@@ -538,7 +530,7 @@ export default function ChatRoomScreen() {
           />
           <View style={styles.settingsSheet}>
             <View style={styles.settingsHandle} />
-            <Text style={styles.settingsTitle}>Chat Settings</Text>
+            <Text style={styles.settingsTitle}>{t('chatSettings')}</Text>
             <Text style={styles.settingsChatName}>{chat.name}</Text>
 
             <ScrollView
@@ -546,56 +538,56 @@ export default function ChatRoomScreen() {
               contentContainerStyle={styles.settingsScrollContent}
               showsVerticalScrollIndicator={false}
             >
-              <Text style={settingsSectionLabel}>Notifications</Text>
+              <Text style={settingsSectionLabel}>{t('notifications')}</Text>
               {renderSettingRow({
                 icon: Bell,
                 color: '#FF3B30',
-                label: 'Notifications',
-                description: 'Get notified about new messages',
+                label: t('notifications'),
+                description: t('notifNewMessages'),
                 value: settings.notificationsEnabled,
                 onToggle: (v) => updateChatSettings(chatId!, { notificationsEnabled: v }),
               })}
               {renderSettingRow({
                 icon: Volume2,
                 color: '#007AFF',
-                label: 'Sound',
-                description: 'Play a sound for new messages',
+                label: t('sound'),
+                description: t('soundDesc'),
                 value: settings.soundEnabled,
                 onToggle: (v) => updateChatSettings(chatId!, { soundEnabled: v }),
               })}
               {renderSettingRow({
                 icon: Vibrate,
                 color: '#5856D6',
-                label: 'Vibration',
-                description: 'Vibrate when a message arrives',
+                label: t('vibration'),
+                description: t('vibrationDesc'),
                 value: settings.vibrationEnabled,
                 onToggle: (v) => updateChatSettings(chatId!, { vibrationEnabled: v }),
               })}
 
-              <Text style={settingsSectionLabel}>Appearance</Text>
+              <Text style={settingsSectionLabel}>{t('appearance')}</Text>
               {renderSettingRow({
                 icon: Clock,
                 color: '#34C759',
-                label: 'Show Timestamps',
-                description: 'Display the time under each message',
+                label: t('showTimestamps'),
+                description: t('showTimestampsDesc'),
                 value: settings.showTimestamps,
                 onToggle: (v) => updateChatSettings(chatId!, { showTimestamps: v }),
               })}
               {renderSettingRow({
                 icon: User,
                 color: '#FF9500',
-                label: 'Show Sender Names',
-                description: 'Display who sent each message',
+                label: t('showSenderNames'),
+                description: t('showSenderNamesDesc'),
                 value: settings.showSenderNames,
                 onToggle: (v) => updateChatSettings(chatId!, { showSenderNames: v }),
               })}
 
-              <Text style={settingsSectionLabel}>Input</Text>
+              <Text style={settingsSectionLabel}>{t('inputSection')}</Text>
               {renderSettingRow({
                 icon: CornerDownLeft,
                 color: '#5AC8FA',
-                label: 'Enter to Send',
-                description: 'Press Enter to send instead of adding a new line',
+                label: t('enterToSend'),
+                description: t('enterToSendDesc'),
                 value: settings.enterToSend,
                 onToggle: (v) => updateChatSettings(chatId!, { enterToSend: v }),
               })}
@@ -606,7 +598,7 @@ export default function ChatRoomScreen() {
               onPress={() => setShowSettings(false)}
               activeOpacity={0.7}
             >
-              <Text style={styles.settingsDoneText}>Done</Text>
+              <Text style={styles.settingsDoneText}>{t('done')}</Text>
             </TouchableOpacity>
           </View>
         </View>

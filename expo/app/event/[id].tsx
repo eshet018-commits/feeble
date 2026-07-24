@@ -28,6 +28,7 @@ import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { useEvents } from '@/contexts/EventContext';
 import { useGroups } from '@/contexts/GroupContext';
 import { useUser } from '@/contexts/UserContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { PollOption } from '@/types/event';
 import { REMINDER_OPTIONS } from '@/constants/reminders';
 
@@ -37,6 +38,7 @@ export default function EventDetailScreen() {
   const { events, getCategoryById, deleteEvent, getPoll, subscribeToPoll, voteOnPoll } = useEvents();
   const { getUserRoleInGroup } = useGroups();
   const { userId } = useUser();
+  const { t, locale } = useLanguage();
 
   const event = useMemo(() => {
     return events.find((e) => e.id === id);
@@ -84,7 +86,7 @@ export default function EventDetailScreen() {
   if (!event) {
     return (
       <View style={styles.container}>
-        <Text style={styles.errorText}>Event not found</Text>
+        <Text style={styles.errorText}>{t('eventNotFound')}</Text>
       </View>
     );
   }
@@ -92,7 +94,7 @@ export default function EventDetailScreen() {
   const category = getCategoryById(event.categoryId);
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+    return new Date(dateString).toLocaleDateString(locale, {
       weekday: 'long',
       month: 'long',
       day: 'numeric',
@@ -101,7 +103,7 @@ export default function EventDetailScreen() {
   };
 
   const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString('en-US', {
+    return new Date(dateString).toLocaleTimeString(locale, {
       hour: 'numeric',
       minute: '2-digit',
     });
@@ -110,13 +112,13 @@ export default function EventDetailScreen() {
   const getRepeatLabel = () => {
     switch (event.repeatFrequency) {
       case 'daily':
-        return 'Daily';
+        return t('daily');
       case 'weekly':
-        return 'Weekly';
+        return t('weekly');
       case 'monthly':
-        return 'Monthly';
+        return t('monthly');
       default:
-        return 'Does not repeat';
+        return t('doesNotRepeat');
     }
   };
 
@@ -133,12 +135,12 @@ export default function EventDetailScreen() {
 
   const handleDelete = () => {
     Alert.alert(
-      'Delete Event',
-      'Are you sure you want to delete this event?',
+      t('deleteEvent'),
+      t('deleteEventConfirm'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Delete',
+          text: t('delete'),
           style: 'destructive',
           onPress: async () => {
             await deleteEvent(event.id);
@@ -157,7 +159,7 @@ export default function EventDetailScreen() {
             <Animated.View style={{ opacity: pulseAnim, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Zap size={16} color="#FFF" />
             </Animated.View>
-            <Text style={styles.activeBannerText}>Happening Now</Text>
+            <Text style={styles.activeBannerText}>{t('happeningNow')}</Text>
           </View>
         )}
         <View style={[styles.header, { backgroundColor: category?.color || '#999' }]}>
@@ -171,7 +173,7 @@ export default function EventDetailScreen() {
           <View style={styles.pollSection}>
             <View style={styles.pollHeader}>
               <BarChart3 size={20} color="#007AFF" />
-              <Text style={styles.pollTitle}>Poll</Text>
+              <Text style={styles.pollTitle}>{t('poll')}</Text>
             </View>
             <Text style={styles.pollQuestion}>{poll.question}</Text>
             {(() => {
@@ -212,7 +214,7 @@ export default function EventDetailScreen() {
                           </View>
                           {totalVotes > 0 && (
                             <Text style={styles.pollPercentage}>
-                              {voteCount} {voteCount === 1 ? 'vote' : 'votes'} ({percentage}%)
+                              {voteCount} {voteCount === 1 ? t('vote') : t('votes')} ({percentage}%)
                             </Text>
                           )}
                         </View>
@@ -227,7 +229,7 @@ export default function EventDetailScreen() {
                     );
                   })}
                   <Text style={styles.pollTotalVotes}>
-                    {totalVotes} {totalVotes === 1 ? 'vote' : 'votes'}
+                    {totalVotes} {totalVotes === 1 ? t('vote') : t('votes')}
                   </Text>
                 </>
               );
@@ -239,10 +241,10 @@ export default function EventDetailScreen() {
           <View style={styles.infoRow}>
             <Calendar size={20} color="#007AFF" />
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Start</Text>
+              <Text style={styles.infoLabel}>{t('start')}</Text>
               <Text style={styles.infoValue}>
                 {formatDate(event.startDate)}
-                {!event.allDay && ` at ${formatTime(event.startDate)}`}
+                {!event.allDay && ` ${t('atTime')} ${formatTime(event.startDate)}`}
               </Text>
             </View>
           </View>
@@ -252,10 +254,10 @@ export default function EventDetailScreen() {
           <View style={styles.infoRow}>
             <Clock size={20} color="#007AFF" />
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>End</Text>
+              <Text style={styles.infoLabel}>{t('end')}</Text>
               <Text style={styles.infoValue}>
                 {formatDate(event.endDate)}
-                {!event.allDay && ` at ${formatTime(event.endDate)}`}
+                {!event.allDay && ` ${t('atTime')} ${formatTime(event.endDate)}`}
               </Text>
             </View>
           </View>
@@ -264,7 +266,7 @@ export default function EventDetailScreen() {
         {event.allDay && (
           <View style={styles.section}>
             <View style={styles.badge}>
-              <Text style={styles.badgeText}>All Day Event</Text>
+              <Text style={styles.badgeText}>{t('allDayEvent')}</Text>
             </View>
           </View>
         )}
@@ -273,11 +275,11 @@ export default function EventDetailScreen() {
           <View style={styles.infoRow}>
             <Repeat size={20} color="#007AFF" />
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Repeat</Text>
+              <Text style={styles.infoLabel}>{t('repeat')}</Text>
               <Text style={styles.infoValue}>{getRepeatLabel()}</Text>
               {event.repeatEndDate && (
                 <Text style={styles.infoSubValue}>
-                  Until {formatDate(event.repeatEndDate)}
+                  {t('untilDate', { date: formatDate(event.repeatEndDate) })}
                 </Text>
               )}
             </View>
@@ -288,12 +290,12 @@ export default function EventDetailScreen() {
           <View style={styles.infoRow}>
             <Tag size={20} color="#007AFF" />
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Category</Text>
+              <Text style={styles.infoLabel}>{t('category')}</Text>
               <View style={styles.categoryBadge}>
                 <View
                   style={[styles.categoryDot, { backgroundColor: category?.color || '#999' }]}
                 />
-                <Text style={styles.categoryName}>{category?.name || 'Uncategorized'}</Text>
+                <Text style={styles.categoryName}>{category?.name || t('uncategorized')}</Text>
               </View>
             </View>
           </View>
@@ -304,15 +306,12 @@ export default function EventDetailScreen() {
             <View style={styles.infoRow}>
               <Bell size={20} color="#007AFF" />
               <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Reminders</Text>
-                {event.reminders.map((reminder) => {
-                  const option = REMINDER_OPTIONS.find((o) => o.minutes === reminder.minutes);
-                  return (
-                    <Text key={reminder.id} style={styles.reminderItem}>
-                      • {option?.label || `${reminder.minutes} minutes before`}
-                    </Text>
-                  );
-                })}
+                <Text style={styles.infoLabel}>{t('reminders')}</Text>
+                {event.reminders.map((reminder) => (
+                  <Text key={reminder.id} style={styles.reminderItem}>
+                    • {t('minutesBefore', { n: reminder.minutes })}
+                  </Text>
+                ))}
               </View>
             </View>
           </View>
@@ -323,7 +322,7 @@ export default function EventDetailScreen() {
             <View style={styles.infoRow}>
               <MapPin size={20} color="#007AFF" />
               <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Location</Text>
+                <Text style={styles.infoLabel}>{t('location')}</Text>
                 <Text style={styles.infoValue}>{event.location.address}</Text>
               </View>
             </View>
@@ -375,11 +374,11 @@ export default function EventDetailScreen() {
               onPress={() => router.push(`/event/${id}/edit`)}
             >
               <Edit3 size={20} color="#007AFF" />
-              <Text style={styles.editButtonText}>Edit</Text>
+              <Text style={styles.editButtonText}>{t('edit')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
               <Trash2 size={20} color="#FF3B30" />
-              <Text style={styles.deleteButtonText}>Delete</Text>
+              <Text style={styles.deleteButtonText}>{t('delete')}</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>

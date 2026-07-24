@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGroups } from '@/contexts/GroupContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { trpc } from '@/lib/trpc';
 import * as Clipboard from 'expo-clipboard';
 
@@ -19,6 +20,7 @@ export default function InviteMembersScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getGroupById } = useGroups();
+  const { t } = useLanguage();
   const [inviteCode, setInviteCode] = useState('');
   const [copied, setCopied] = useState(false);
 
@@ -42,7 +44,7 @@ export default function InviteMembersScreen() {
     if (!inviteCode.trim()) return;
 
     if (inviteCode === groupInviteCode) {
-      Alert.alert('Error', 'You cannot join your own group');
+      Alert.alert(t('error'), t('cannotJoinOwnGroup'));
       return;
     }
 
@@ -52,7 +54,7 @@ export default function InviteMembersScreen() {
   if (!group) {
     return (
       <View style={styles.container}>
-        <Text>Group not found</Text>
+        <Text>{t('groupNotFound')}</Text>
       </View>
     );
   }
@@ -62,9 +64,9 @@ export default function InviteMembersScreen() {
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.backText}>Done</Text>
+            <Text style={styles.backText}>{t('done')}</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Invite Members</Text>
+          <Text style={styles.headerTitle}>{t('inviteMembers')}</Text>
           <View style={styles.placeholder} />
         </View>
       </SafeAreaView>
@@ -74,9 +76,9 @@ export default function InviteMembersScreen() {
           <View style={styles.iconContainer}>
             <UserPlus size={40} color="#007AFF" />
           </View>
-          <Text style={styles.sectionTitle}>Share Group Code</Text>
+          <Text style={styles.sectionTitle}>{t('shareGroupCode')}</Text>
           <Text style={styles.sectionDescription}>
-            Share this code with people you want to invite to {group.name}
+            {t('shareCodeDesc', { name: group.name })}
           </Text>
 
           <View style={styles.codeContainer}>
@@ -94,26 +96,24 @@ export default function InviteMembersScreen() {
               <Copy size={20} color="#FFF" />
             )}
             <Text style={styles.copyButtonText}>
-              {copied ? 'Copied!' : 'Copy Code'}
+              {copied ? t('copied') : t('copyCode')}
             </Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.divider}>
           <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>OR</Text>
+          <Text style={styles.dividerText}>{t('or')}</Text>
           <View style={styles.dividerLine} />
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Join Another Group</Text>
-          <Text style={styles.sectionDescription}>
-            Enter a group code to join as a viewer
-          </Text>
+          <Text style={styles.sectionTitle}>{t('joinAnotherGroup')}</Text>
+          <Text style={styles.sectionDescription}>{t('joinAsViewerDesc')}</Text>
 
           <TextInput
             style={styles.input}
-            placeholder="Enter group code"
+            placeholder={t('enterGroupCodePh')}
             placeholderTextColor="#999"
             value={inviteCode}
             onChangeText={setInviteCode}
@@ -130,12 +130,12 @@ export default function InviteMembersScreen() {
             disabled={!inviteCode.trim()}
             activeOpacity={0.7}
           >
-            <Text style={styles.joinButtonText}>Join Group</Text>
+            <Text style={styles.joinButtonText}>{t('joinGroup')}</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.infoSection}>
-          <Text style={styles.infoTitle}>Current Members ({members.length})</Text>
+          <Text style={styles.infoTitle}>{t('currentMembers')} ({members.length})</Text>
           {members.map((member, index) => (
             <View key={member.id} style={styles.memberItem}>
               <View style={styles.memberAvatar}>
@@ -144,9 +144,9 @@ export default function InviteMembersScreen() {
                 </Text>
               </View>
               <View style={styles.memberInfo}>
-                <Text style={styles.memberName}>Member {member.userId.slice(-8)}</Text>
+                <Text style={styles.memberName}>{t('memberCap')} {member.userId.slice(-8)}</Text>
                 <Text style={styles.memberRole}>
-                  {member.role === 'admin' ? 'Admin' : 'Viewer'}
+                  {member.role === 'admin' ? t('adminRole') : t('viewerRole')}
                 </Text>
               </View>
             </View>
