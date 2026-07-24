@@ -17,6 +17,7 @@ import {
   registerForPushNotifications,
   unregisterPushToken,
   setupNotificationTapHandler,
+  startPushQueuePump,
   loadSeenNotifIds,
   getNotificationPermissionStatus,
   requestNotificationPermissions,
@@ -110,6 +111,14 @@ function NotificationBootstrap() {
       unregisterPushToken(userId).catch(() => {});
     }
   }, [isAuthenticated, userId]);
+
+  // Background push-queue pump — makes sure any push jobs queued while the
+  // backend was briefly unavailable get delivered (drains every 45s and on
+  // app foreground). This gives at-least-once delivery for every push.
+  useEffect(() => {
+    const stopPump = startPushQueuePump();
+    return () => stopPump();
+  }, []);
 
   useEffect(() => {
     // Handle taps on notifications — deep-link into the relevant screen.

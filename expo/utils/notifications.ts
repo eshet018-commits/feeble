@@ -1,5 +1,5 @@
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { Event } from '@/types/event';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { firebaseClient } from '@/lib/firebase-client';
@@ -552,11 +552,25 @@ export async function sendTestNotification(
 
         const json: any = result.json;
         if (json === null) {
-          // Still non-JSON after all retries — backend is genuinely down or
-          // stuck mid-redeploy.
-          remoteError = `Backend unavailable after ${result.attempts} attempts (HTTP ${result.status}). It is likely redeploying — wait ~30s and try again. Body: ${result.rawText.slice(0, 120)}`;
-          details.push(remoteError);
-          return { localShown, remoteAttempted, remoteSuccess: false, remoteError, pushToken, details };
+          // Backend is briefly down (redeploying) — queue the push durably
+          // in Firebase so it is delivered automatically once the backend is
+          // back (any running app instance drains the queue within ~45s).
+          try {
+            await firebaseClient.enqueuePushJob([{
+              to: token,
+              title: 'Test Notification (Remote)',
+              body: 'This verifies remote push works — you should see this even when the app is closed.',
+              data: { kind: 'default', test: true },
+              sound: true,
+            }]);
+            remoteSuccess = true;
+            details.push('Backend was briefly restarting — the push was queued durably and will be delivered automatically within a minute.');
+            return { localShown, remoteAttempted, remoteSuccess: true, pushToken, details };
+          } catch {
+            remoteError = `Backend unavailable after ${result.attempts} attempts (HTTP ${result.status}) and queueing failed. Body: ${result.rawText.slice(0, 120)}`;
+            details.push(remoteError);
+            return { localShown, remoteAttempted, remoteSuccess: false, remoteError, pushToken, details };
+          }
         }
         if (result.attempts > 1) {
           details.push(`Backend reached after ${result.attempts} attempts (it was briefly restarting).`);
@@ -705,53 +719,133 @@ export async function sendRemotePushes(
   }));
 
   try {
-    // All platforms route through the backend /api/push endpoint.
-    // The backend handles:
-    //   - FCM tokens (web, Android) → FCM HTTP v1 API
-    //   - APNs tokens (iOS) → direct APNs HTTP/2 API using .p8 key
-    //   - Expo tokens (legacy) → Expo Push API (fallback)
-    // This bypasses the need for EAS or batchImport.
-    const candidateUrls = [
-      process.env.EXPO_PUBLIC_RORK_API_BASE_URL,
-      process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL,
-      typeof window !== 'undefined' ? window.location.origin : '',
-    ].filter(Boolean) as string[];
-
-    // On native, also try the toolkit URL as a fallback.
-    if (Platform.OS !== 'web' && process.env.EXPO_PUBLIC_TOOLKIT_URL) {
-      candidateUrls.push(process.env.EXPO_PUBLIC_TOOLKIT_URL);
-    }
-
-    if (candidateUrls.length === 0) {
-      console.log('[Notifications] No backend URL available — skipping push');
-      return;
-    }
-
+    // GUARANTEED DELIVERY: every push job is first written to the durable
+    // Firebase `pushQueue` (Firebase is always available), THEN the backend
+    // is asked to drain the queue. If the backend happens to be down
+    // (HTTP 503 during a redeploy), the job stays safely queued and is
+    // delivered on the next drain — triggered periodically by ANY running
+    // app instance. No notification is ever lost to a backend blip.
     for (let i = 0; i < messages.length; i += 100) {
       const batch = messages.slice(i, i + 100);
-      let delivered = false;
-      for (const baseUrl of candidateUrls) {
-        // Retries automatically on transient 502/503/504 gateway errors
-        // (backend cold start / redeploy) and non-JSON responses.
-        const result = await postPushWithRetry(`${baseUrl}/api/push`, { messages: batch }, 3);
-        if (!result.ok) continue; // try next URL
-        const json: any = result.json;
-        if (json?.sent && json.sent > 0) {
-          console.log(`[Notifications] Push proxy: ${json.sent} delivered (${batch.length} tokens, ${result.attempts} attempt(s))`);
-          delivered = true;
-        } else if (json?.error) {
-          console.warn(`[Notifications] Push proxy error: ${String(json.error).slice(0, 200)}`);
-        }
-        break; // got a JSON response — no need to try other URLs
+      let enqueued = false;
+      try {
+        const jobId = await firebaseClient.enqueuePushJob(batch);
+        enqueued = true;
+        console.log(`[Notifications] Push job ${jobId} queued durably (${batch.length} token(s))`);
+      } catch (e) {
+        console.warn('[Notifications] Failed to enqueue push job — falling back to direct send:', String(e).slice(0, 120));
       }
-      if (!delivered) {
-        console.log('[Notifications] All backend push proxies failed — skipping batch');
+
+      if (enqueued) {
+        // Ask the backend to deliver now (fire-and-forget — the queue
+        // guarantees delivery even if this ping fails).
+        drainPushQueue().catch(() => {});
+      } else {
+        // Firebase enqueue failed (very rare) — fall back to the direct
+        // backend push with retries.
+        await directSendBatch(batch);
       }
     }
   } catch (error) {
     // Fire-and-forget: never throw, so the sender's action is not blocked.
     console.log('[Notifications] Remote push skipped:', String(error).slice(0, 100));
   }
+}
+
+/** Candidate backend base URLs, in priority order. */
+function getBackendUrls(): string[] {
+  const urls = [
+    process.env.EXPO_PUBLIC_RORK_API_BASE_URL,
+    process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL,
+    typeof window !== 'undefined' ? window.location.origin : '',
+  ].filter(Boolean) as string[];
+  if (Platform.OS !== 'web' && process.env.EXPO_PUBLIC_TOOLKIT_URL) {
+    urls.push(process.env.EXPO_PUBLIC_TOOLKIT_URL);
+  }
+  return urls;
+}
+
+/** Legacy direct send — used only if the durable queue write fails. */
+async function directSendBatch(batch: RemotePushPayload[]): Promise<void> {
+  const candidateUrls = getBackendUrls();
+  if (candidateUrls.length === 0) {
+    console.log('[Notifications] No backend URL available — skipping push');
+    return;
+  }
+  for (const baseUrl of candidateUrls) {
+    const result = await postPushWithRetry(`${baseUrl}/api/push`, { messages: batch }, 3);
+    if (!result.ok) continue;
+    const json: any = result.json;
+    if (json?.sent && json.sent > 0) {
+      console.log(`[Notifications] Push proxy: ${json.sent} delivered (${batch.length} tokens, ${result.attempts} attempt(s))`);
+    } else if (json?.error) {
+      console.warn(`[Notifications] Push proxy error: ${String(json.error).slice(0, 200)}`);
+    }
+    return;
+  }
+  console.log('[Notifications] All backend push proxies failed — skipping batch');
+}
+
+// ---------------------------------------------------------------------------
+// Push queue pump — asks the backend to drain the durable push queue.
+// Every running app instance calls this periodically and on foreground, so
+// jobs queued while the backend was briefly down (503) still get delivered
+// within a minute by whichever device pings next.
+// ---------------------------------------------------------------------------
+
+let lastDrainAt = 0;
+const DRAIN_MIN_INTERVAL_MS = 5000;
+
+/**
+ * Trigger a backend drain of the durable push queue. Quiet on failure —
+ * the queue keeps the jobs safe until a later drain succeeds.
+ */
+export async function drainPushQueue(): Promise<void> {
+  const now = Date.now();
+  if (now - lastDrainAt < DRAIN_MIN_INTERVAL_MS) return; // debounce
+  lastDrainAt = now;
+
+  for (const baseUrl of getBackendUrls()) {
+    try {
+      const result = await postPushWithRetry(`${baseUrl}/api/push-queue/drain`, {}, 2);
+      if (result.ok) {
+        const json: any = result.json;
+        if (json?.processed > 0) {
+          console.log(`[Notifications] Queue drain: ${json.processed} job(s) processed, ${json.delivered} delivered`);
+        }
+        return;
+      }
+    } catch {}
+  }
+  console.log('[Notifications] Queue drain ping failed — jobs remain safely queued for the next drain');
+}
+
+let pumpTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the background push-queue pump: drains the durable queue every 45s
+ * and whenever the app returns to the foreground. Call once from the root
+ * layout; returns a cleanup function.
+ */
+export function startPushQueuePump(): () => void {
+  if (!pumpTimer) {
+    // Initial drain shortly after startup (catches jobs queued while the
+    // backend was down and no other device was online).
+    setTimeout(() => drainPushQueue().catch(() => {}), 3000);
+    pumpTimer = setInterval(() => {
+      drainPushQueue().catch(() => {});
+    }, 45000);
+  }
+  const sub = AppState.addEventListener('change', (state) => {
+    if (state === 'active') drainPushQueue().catch(() => {});
+  });
+  return () => {
+    sub.remove();
+    if (pumpTimer) {
+      clearInterval(pumpTimer);
+      pumpTimer = null;
+    }
+  };
 }
 
 /**

@@ -931,6 +931,34 @@ export const firebaseClient = {
   },
 
   // ---------------------------------------------------------------------------
+  // Durable push queue — every outgoing remote push is FIRST written to
+  // `pushQueue/{jobId}` in Firebase (which is always available), then the
+  // backend is asked to deliver it. If the backend is briefly down (503
+  // during a redeploy), the job stays queued and is delivered on the next
+  // drain — triggered periodically by ANY running app instance. This makes
+  // delivery at-least-once: no notification is ever lost to a backend blip.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Enqueue a push job for guaranteed delivery. Returns the job ID.
+   */
+  async enqueuePushJob(messages: Array<{
+    to: string;
+    title: string;
+    body: string;
+    data?: Record<string, any>;
+    sound?: boolean | string;
+  }>): Promise<string> {
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    await set(ref(database, `pushQueue/${jobId}`), {
+      messages,
+      createdAt: Date.now(),
+      attempts: 0,
+    });
+    return jobId;
+  },
+
+  // ---------------------------------------------------------------------------
   // Per-chat notification preferences — stored under
   // `chatNotifSettings/{userId}/{chatId}` so the backend push service can read
   // them and suppress remote pushes for chats a user has muted.

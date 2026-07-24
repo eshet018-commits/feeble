@@ -23,130 +23,151 @@ app.use("*", cors());
  *
  * Note: The Hono app is mounted at /api, so this route is /api/push.
  */
+interface PushMessage {
+  to: string;
+  title: string;
+  body: string;
+  data?: Record<string, unknown>;
+  sound?: boolean | string;
+}
+
+/**
+ * Deliver a batch of push messages via the appropriate service. Shared by
+ * the /push endpoint (direct sends) and the /push-queue/drain endpoint
+ * (durable queued sends). Returns the count sent and any errors.
+ */
+async function deliverPushMessages(
+  messages: PushMessage[],
+): Promise<{ sent: number; errors: string[] }> {
+  const isExpoToken = (t: string) => t.startsWith("ExponentPushToken");
+    // Expo tokens go to the Expo Push API; everything else (FCM tokens AND
+    // raw APNs tokens) goes through the backend messaging class, which sends
+    // APNs tokens directly via APNs HTTP/2 and FCM tokens via FCM HTTP v1.
+  const expoMessages = messages.filter((m) => isExpoToken(m.to));
+  const fcmOrApnsMessages = messages.filter((m) => !isExpoToken(m.to));
+
+  const apnsCount = fcmOrApnsMessages.filter((m) => isApnsToken(m.to)).length;
+  const fcmCount = fcmOrApnsMessages.length - apnsCount;
+  if (fcmOrApnsMessages.length > 0) {
+    console.log(`[PushEndpoint] Token breakdown: ${fcmCount} FCM, ${apnsCount} APNs, ${expoMessages.length} Expo`);
+  }
+
+  let sent = 0;
+  const errors: string[] = [];
+
+  // Send pushes — APNs tokens go directly via APNs HTTP/2 (bypasses
+  // Firebase entirely), FCM tokens go via FCM HTTP v1 API.
+  // This decoupling ensures APNs pushes work even if Firebase auth is broken.
+  if (fcmOrApnsMessages.length > 0) {
+    const msg = fcmOrApnsMessages[0];
+    const data: Record<string, string> = {};
+    if (msg.data) {
+      for (const [k, v] of Object.entries(msg.data)) {
+        data[k] = typeof v === "string" ? v : JSON.stringify(v);
+      }
+    }
+
+    // Separate APNs tokens from FCM tokens.
+    const apnsTokens: string[] = [];
+    const fcmTokens: string[] = [];
+    for (const m of fcmOrApnsMessages) {
+      if (isApnsToken(m.to)) apnsTokens.push(m.to);
+      else fcmTokens.push(m.to);
+    }
+
+    // Send APNs tokens directly — no Firebase dependency at all.
+    if (apnsTokens.length > 0) {
+      console.log(`[PushEndpoint] Sending ${apnsTokens.length} push(es) via direct APNs (bypassing Firebase)`);
+      await Promise.all(
+        apnsTokens.map(async (tok) => {
+          try {
+            const success = await sendApnsPush({
+              token: tok,
+              title: msg.title,
+              body: msg.body,
+              data,
+              priority: 'high',
+            });
+            if (success) sent++;
+            else errors.push(`APNs push failed for ${tok.slice(0, 12)}...`);
+          } catch (e) {
+            errors.push(`APNs error: ${String(e).slice(0, 200)}`);
+          }
+        }),
+      );
+    }
+
+    // Send FCM tokens via FCM HTTP v1 API (requires Firebase auth).
+    if (fcmTokens.length > 0 && messaging) {
+      try {
+        const response = await messaging.sendEachForMulticast({
+          tokens: fcmTokens,
+          notification: { title: msg.title, body: msg.body },
+          data,
+          android: { priority: "high" },
+        });
+        for (const r of response.responses) {
+          if (r.success) sent++;
+          else if (r.error) errors.push(String(r.error).slice(0, 200));
+        }
+      } catch (error) {
+        console.warn("[PushEndpoint] FCM send failed:", error);
+        errors.push(String(error).slice(0, 200));
+      }
+    } else if (fcmTokens.length > 0 && !messaging) {
+      errors.push("FCM messaging not configured (Firebase auth issue)");
+    }
+  }
+
+  // Send Expo pushes via Expo Push API.
+  if (expoMessages.length > 0) {
+    for (let i = 0; i < expoMessages.length; i += 100) {
+      const batch = expoMessages.slice(i, i + 100);
+      try {
+        const res = await fetch(EXPO_PUSH_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(batch),
+        });
+        const json = (await res.json()) as any;
+        if (json?.errors) {
+          console.warn("[PushEndpoint] Expo Push API errors:", json.errors);
+          for (const e of json.errors) {
+            errors.push(`Expo Push API: ${typeof e === 'string' ? e : JSON.stringify(e).slice(0, 200)}`);
+          }
+        }
+        if (Array.isArray(json?.data)) {
+          for (const ticket of json.data) {
+            if (ticket?.status === "error") {
+              const ticketErr = ticket.message || ticket.details || 'Unknown Expo push ticket error';
+              console.warn("[PushEndpoint] Push ticket error:", ticketErr);
+              errors.push(`Expo ticket: ${String(ticketErr).slice(0, 200)}`);
+            } else {
+              sent++;
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("[PushEndpoint] Expo push failed:", error);
+      }
+    }
+  }
+
+  return { sent, errors };
+}
+
 app.post("/push", async (c) => {
   try {
     const body = await c.req.json();
-    const messages = Array.isArray(body?.messages) ? body.messages : [];
+    const messages: PushMessage[] = Array.isArray(body?.messages) ? body.messages : [];
     if (messages.length === 0) {
       return c.json({ success: true, sent: 0 });
     }
 
-    const isExpoToken = (t: string) => t.startsWith("ExponentPushToken");
-    // Expo tokens go to the Expo Push API; everything else (FCM tokens AND
-    // raw APNs tokens) goes through the backend messaging class, which sends
-    // APNs tokens directly via APNs HTTP/2 and FCM tokens via FCM HTTP v1.
-    const expoMessages = messages.filter((m: any) => isExpoToken(m.to));
-    const fcmOrApnsMessages = messages.filter((m: any) => !isExpoToken(m.to));
-
-    const apnsCount = fcmOrApnsMessages.filter((m: any) => isApnsToken(m.to)).length;
-    const fcmCount = fcmOrApnsMessages.length - apnsCount;
-    if (fcmOrApnsMessages.length > 0) {
-      console.log(`[PushEndpoint] Token breakdown: ${fcmCount} FCM, ${apnsCount} APNs, ${expoMessages.length} Expo`);
-    }
-
-    let sent = 0;
-    const errors: string[] = [];
-
-    // Send pushes — APNs tokens go directly via APNs HTTP/2 (bypasses
-    // Firebase entirely), FCM tokens go via FCM HTTP v1 API.
-    // This decoupling ensures APNs pushes work even if Firebase auth is broken.
-    if (fcmOrApnsMessages.length > 0) {
-      const msg = fcmOrApnsMessages[0];
-      const data: Record<string, string> = {};
-      if (msg.data) {
-        for (const [k, v] of Object.entries(msg.data)) {
-          data[k] = typeof v === "string" ? v : JSON.stringify(v);
-        }
-      }
-
-      // Separate APNs tokens from FCM tokens.
-      const apnsTokens: string[] = [];
-      const fcmTokens: string[] = [];
-      for (const m of fcmOrApnsMessages) {
-        if (isApnsToken(m.to)) apnsTokens.push(m.to);
-        else fcmTokens.push(m.to);
-      }
-
-      // Send APNs tokens directly — no Firebase dependency at all.
-      if (apnsTokens.length > 0) {
-        console.log(`[PushEndpoint] Sending ${apnsTokens.length} push(es) via direct APNs (bypassing Firebase)`);
-        await Promise.all(
-          apnsTokens.map(async (tok) => {
-            try {
-              const success = await sendApnsPush({
-                token: tok,
-                title: msg.title,
-                body: msg.body,
-                data,
-                priority: 'high',
-              });
-              if (success) sent++;
-              else errors.push(`APNs push failed for ${tok.slice(0, 12)}...`);
-            } catch (e) {
-              errors.push(`APNs error: ${String(e).slice(0, 200)}`);
-            }
-          }),
-        );
-      }
-
-      // Send FCM tokens via FCM HTTP v1 API (requires Firebase auth).
-      if (fcmTokens.length > 0 && messaging) {
-        try {
-          const response = await messaging.sendEachForMulticast({
-            tokens: fcmTokens,
-            notification: { title: msg.title, body: msg.body },
-            data,
-            android: { priority: "high" },
-          });
-          for (const r of response.responses) {
-            if (r.success) sent++;
-            else if (r.error) errors.push(String(r.error).slice(0, 200));
-          }
-        } catch (error) {
-          console.warn("[PushEndpoint] FCM send failed:", error);
-          errors.push(String(error).slice(0, 200));
-        }
-      } else if (fcmTokens.length > 0 && !messaging) {
-        errors.push("FCM messaging not configured (Firebase auth issue)");
-      }
-    }
-
-    // Send Expo pushes via Expo Push API.
-    if (expoMessages.length > 0) {
-      for (let i = 0; i < expoMessages.length; i += 100) {
-        const batch = expoMessages.slice(i, i + 100);
-        try {
-          const res = await fetch(EXPO_PUSH_URL, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify(batch),
-          });
-          const json = (await res.json()) as any;
-          if (json?.errors) {
-            console.warn("[PushEndpoint] Expo Push API errors:", json.errors);
-            for (const e of json.errors) {
-              errors.push(`Expo Push API: ${typeof e === 'string' ? e : JSON.stringify(e).slice(0, 200)}`);
-            }
-          }
-          if (Array.isArray(json?.data)) {
-            for (const ticket of json.data) {
-              if (ticket?.status === "error") {
-                const ticketErr = ticket.message || ticket.details || 'Unknown Expo push ticket error';
-                console.warn("[PushEndpoint] Push ticket error:", ticketErr);
-                errors.push(`Expo ticket: ${String(ticketErr).slice(0, 200)}`);
-              } else {
-                sent++;
-              }
-            }
-          }
-        } catch (error) {
-          console.warn("[PushEndpoint] Expo push failed:", error);
-        }
-      }
-    }
+    const { sent, errors } = await deliverPushMessages(messages);
 
     if (sent === 0 && errors.length > 0) {
       return c.json({ success: false, sent: 0, error: errors.join("; ") });
@@ -155,6 +176,93 @@ app.post("/push", async (c) => {
   } catch (error) {
     console.warn("[PushEndpoint] Failed:", error);
     return c.json({ success: false, sent: 0, error: String(error) }, 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Durable push queue drain — the client writes push jobs to `pushQueue/`
+// in Firebase FIRST (Firebase is always up), then calls this endpoint to
+// deliver them. If this endpoint is unreachable at that moment (backend
+// redeploying → 503), the job stays safely queued and gets delivered on
+// the next drain — which every running app instance triggers periodically.
+// Result: at-least-once delivery; no notification is ever lost to a 503.
+// ---------------------------------------------------------------------------
+
+const QUEUE_JOB_TTL_MS = 24 * 60 * 60 * 1000; // drop jobs older than 24h
+const QUEUE_CLAIM_MS = 60 * 1000; // skip jobs another drain claimed <60s ago
+const QUEUE_MAX_ATTEMPTS = 10;
+
+app.post("/push-queue/drain", async (c) => {
+  if (!database) {
+    return c.json({ success: false, processed: 0, error: "database not configured" });
+  }
+  try {
+    const snap = await database.ref("pushQueue").get();
+    const jobs: Record<string, any> = snap.exists() ? snap.val() || {} : {};
+    const jobIds = Object.keys(jobs);
+    if (jobIds.length === 0) {
+      return c.json({ success: true, processed: 0, delivered: 0 });
+    }
+
+    const now = Date.now();
+    let processed = 0;
+    let delivered = 0;
+
+    for (const jobId of jobIds) {
+      const job = jobs[jobId];
+      const messages: PushMessage[] = Array.isArray(job?.messages) ? job.messages : [];
+
+      // Drop malformed or expired jobs.
+      if (messages.length === 0 || (job?.createdAt && now - job.createdAt > QUEUE_JOB_TTL_MS)) {
+        await database.ref(`pushQueue/${jobId}`).remove().catch(() => {});
+        continue;
+      }
+      // Skip jobs currently claimed by another concurrent drain (dedup guard).
+      if (job?.claimedAt && now - job.claimedAt < QUEUE_CLAIM_MS) {
+        continue;
+      }
+
+      // Claim the job before sending so concurrent drains don't double-send.
+      try {
+        await database.ref(`pushQueue/${jobId}`).update({ claimedAt: now });
+      } catch {
+        continue; // couldn't claim — leave for next drain
+      }
+
+      processed++;
+      try {
+        const { sent, errors } = await deliverPushMessages(messages);
+        const attempts = (job?.attempts || 0) + 1;
+        if (sent > 0 || attempts >= QUEUE_MAX_ATTEMPTS || errors.length === 0) {
+          // Delivered (or permanently undeliverable) — remove from queue.
+          delivered += sent;
+          await database.ref(`pushQueue/${jobId}`).remove().catch(() => {});
+          if (sent === 0 && errors.length > 0) {
+            console.warn(`[PushQueue] Job ${jobId} dropped after ${attempts} attempts: ${errors.join("; ").slice(0, 300)}`);
+          }
+        } else {
+          // Transient failure — release the claim so a later drain retries.
+          await database
+            .ref(`pushQueue/${jobId}`)
+            .update({ attempts, claimedAt: null, lastError: errors.join("; ").slice(0, 300) })
+            .catch(() => {});
+        }
+      } catch (e) {
+        console.warn(`[PushQueue] Job ${jobId} delivery threw:`, e);
+        await database
+          .ref(`pushQueue/${jobId}`)
+          .update({ attempts: (job?.attempts || 0) + 1, claimedAt: null })
+          .catch(() => {});
+      }
+    }
+
+    if (processed > 0) {
+      console.log(`[PushQueue] Drain complete: ${processed} job(s) processed, ${delivered} push(es) delivered`);
+    }
+    return c.json({ success: true, processed, delivered });
+  } catch (error) {
+    console.warn("[PushQueue] Drain failed:", error);
+    return c.json({ success: false, processed: 0, error: String(error).slice(0, 300) }, 500);
   }
 });
 
