@@ -23,6 +23,7 @@ import {
   signOut,
 } from 'firebase/auth';
 import { LogIn, UserPlus, Mail, Lock, Check } from 'lucide-react-native';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function AuthScreen() {
   const router = useRouter();
@@ -32,10 +33,11 @@ export default function AuthScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const { t } = useLanguage();
 
   const handleForgotPassword = async () => {
     if (!email) {
-      Alert.alert('Error', 'Please enter your email address');
+      Alert.alert(t('error'), t('enterEmailFirst'));
       return;
     }
 
@@ -47,24 +49,24 @@ export default function AuthScreen() {
       console.log('[Auth] Password reset email sent');
       
       Alert.alert(
-        'Email Sent',
-        'A password reset link has been sent to your email address. Please check your inbox.',
-        [{ text: 'OK' }]
+        t('emailSent'),
+        t('resetLinkSent'),
+        [{ text: t('ok') }]
       );
     } catch (error: any) {
       console.warn('[Auth] Password reset error:', error?.code || error?.message || 'unknown');
       
-      let errorMessage = 'Failed to send reset email';
+      let errorMessage = t('resetFailed');
       
       if (error.code === 'auth/invalid-email') {
-        errorMessage = 'Invalid email address';
+        errorMessage = t('invalidEmail');
       } else if (error.code === 'auth/user-not-found') {
-        errorMessage = 'No account found with this email';
+        errorMessage = t('noAccountFound');
       } else if (error.code === 'auth/network-request-failed') {
-        errorMessage = 'Network error. Please check your connection';
+        errorMessage = t('networkError');
       }
       
-      Alert.alert('Error', errorMessage);
+      Alert.alert(t('error'), errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -93,17 +95,17 @@ export default function AuthScreen() {
 
   const handleAuth = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      Alert.alert(t('error'), t('fillAllFields'));
       return;
     }
 
     if (!isLogin && password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+      Alert.alert(t('error'), t('passwordsNoMatch'));
       return;
     }
 
     if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
+      Alert.alert(t('error'), t('passwordMin6'));
       return;
     }
 
@@ -132,30 +134,30 @@ export default function AuthScreen() {
     } catch (error: any) {
       console.warn('[Auth] Authentication error:', error?.code || error?.message || 'unknown');
       
-      let errorMessage = 'Authentication failed';
+      let errorMessage = t('authFailed');
       
       if (isLogin) {
         if (error.code === 'auth/invalid-email' || 
             error.code === 'auth/user-not-found' || 
             error.code === 'auth/wrong-password' ||
             error.code === 'auth/invalid-credential') {
-          errorMessage = 'Invalid email/password';
+          errorMessage = t('invalidCredentials');
         } else if (error.code === 'auth/network-request-failed') {
-          errorMessage = 'Network error. Please check your connection';
+          errorMessage = t('networkError');
         }
       } else {
         if (error.code === 'auth/email-already-in-use') {
-          errorMessage = 'Email already in use';
+          errorMessage = t('emailInUse');
         } else if (error.code === 'auth/invalid-email') {
-          errorMessage = 'Invalid email address';
+          errorMessage = t('invalidEmail');
         } else if (error.code === 'auth/weak-password') {
-          errorMessage = 'Password is too weak';
+          errorMessage = t('weakPassword');
         } else if (error.code === 'auth/network-request-failed') {
-          errorMessage = 'Network error. Please check your connection';
+          errorMessage = t('networkError');
         }
       }
       
-      Alert.alert('Error', errorMessage);
+      Alert.alert(t('error'), errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -180,12 +182,12 @@ export default function AuthScreen() {
               )}
             </View>
             <Text style={styles.title}>
-              {isLogin ? 'Welcome Back' : 'Create Account'}
+              {isLogin ? t('welcomeBack') : t('createAccount')}
             </Text>
             <Text style={styles.subtitle}>
               {isLogin 
-                ? 'Sign in to access your groups and events' 
-                : 'Sign up to start organizing events'}
+                ? t('signInSubtitle') 
+                : t('signUpSubtitle')}
             </Text>
           </View>
 
@@ -196,7 +198,7 @@ export default function AuthScreen() {
               </View>
               <TextInput
                 style={styles.input}
-                placeholder="Email"
+                placeholder={t('email')}
                 placeholderTextColor="#8E8E93"
                 value={email}
                 onChangeText={setEmail}
@@ -213,7 +215,7 @@ export default function AuthScreen() {
               </View>
               <TextInput
                 style={styles.input}
-                placeholder="Password"
+                placeholder={t('password')}
                 placeholderTextColor="#8E8E93"
                 value={password}
                 onChangeText={setPassword}
@@ -231,7 +233,7 @@ export default function AuthScreen() {
                 </View>
                 <TextInput
                   style={styles.input}
-                  placeholder="Confirm Password"
+                  placeholder={t('confirmPassword')}
                   placeholderTextColor="#8E8E93"
                   value={confirmPassword}
                   onChangeText={setConfirmPassword}
@@ -254,7 +256,7 @@ export default function AuthScreen() {
                   <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
                     {rememberMe && <Check size={14} color="#FFFFFF" strokeWidth={3} />}
                   </View>
-                  <Text style={styles.rememberMeText}>Remember Me</Text>
+                  <Text style={styles.rememberMeText}>{t('rememberMe')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -262,7 +264,7 @@ export default function AuthScreen() {
                   disabled={isLoading}
                   style={styles.forgotPasswordContainer}
                 >
-                  <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+                  <Text style={styles.forgotPasswordText}>{t('forgotPassword')}</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -276,14 +278,14 @@ export default function AuthScreen() {
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <Text style={styles.authButtonText}>
-                  {isLogin ? 'Sign In' : 'Create Account'}
+                  {isLogin ? t('signIn') : t('createAccount')}
                 </Text>
               )}
             </TouchableOpacity>
 
             <View style={styles.switchContainer}>
               <Text style={styles.switchText}>
-                {isLogin ? "Don't have an account? " : 'Already have an account? '}
+                {isLogin ? t('noAccount') : t('haveAccount')}
               </Text>
               <TouchableOpacity
                 onPress={() => {
@@ -293,7 +295,7 @@ export default function AuthScreen() {
                 disabled={isLoading}
               >
                 <Text style={styles.switchLink}>
-                  {isLogin ? 'Sign Up' : 'Sign In'}
+                  {isLogin ? t('signUp') : t('signIn')}
                 </Text>
               </TouchableOpacity>
             </View>

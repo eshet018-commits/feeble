@@ -4,10 +4,12 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useUser } from '@/contexts/UserContext';
 import { UserRole } from '@/types/event';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function RoleSelectionScreen() {
   const router = useRouter();
   const { role, updateRole } = useUser();
+  const { t } = useLanguage();
 
   const selectRole = async (newRole: UserRole) => {
     await updateRole(newRole);
@@ -17,9 +19,9 @@ export default function RoleSelectionScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.title}>Select Your Role</Text>
+        <Text style={styles.title}>{t('selectYourRole')}</Text>
         <Text style={styles.subtitle}>
-          Choose how you want to use this app
+          {t('chooseHowToUse')}
         </Text>
 
         <View style={styles.rolesContainer}>
@@ -33,9 +35,9 @@ export default function RoleSelectionScreen() {
             >
               <Shield size={32} color={role === 'admin' ? '#FFF' : '#007AFF'} />
             </View>
-            <Text style={styles.roleTitle}>Admin</Text>
+            <Text style={styles.roleTitle}>{t('adminRole')}</Text>
             <Text style={styles.roleDescription}>
-              Create, edit, and manage all events. Control what viewers can see.
+              {t('adminRoleDesc')}
             </Text>
             {role === 'admin' && <View style={styles.checkmark} />}
           </TouchableOpacity>
@@ -50,9 +52,9 @@ export default function RoleSelectionScreen() {
             >
               <Eye size={32} color={role === 'viewer' ? '#FFF' : '#666'} />
             </View>
-            <Text style={styles.roleTitle}>Viewer</Text>
+            <Text style={styles.roleTitle}>{t('viewerRole')}</Text>
             <Text style={styles.roleDescription}>
-              View events and receive notifications. Cannot create or edit events.
+              {t('viewerRoleDesc')}
             </Text>
             {role === 'viewer' && <View style={styles.checkmark} />}
           </TouchableOpacity>

@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGroups } from '@/contexts/GroupContext';
 import { useUser } from '@/contexts/UserContext';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import OnboardingOverlay from '@/components/OnboardingOverlay';
 
 export default function GroupsListScreen() {
@@ -20,6 +21,7 @@ export default function GroupsListScreen() {
   const { isAuthenticated, isLoading: userLoading } = useUser();
   const { getUserGroups, isGroupAdmin, getMembersByGroupId } = useGroups();
   const { registerView } = useOnboarding();
+  const { t } = useLanguage();
 
   const userGroups = getUserGroups();
 
@@ -41,9 +43,9 @@ export default function GroupsListScreen() {
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.headerTitle}>My Groups</Text>
+            <Text style={styles.headerTitle}>{t('myGroups')}</Text>
             <Text style={styles.headerSubtitle}>
-              {userGroups.length} {userGroups.length === 1 ? 'group' : 'groups'}
+              {userGroups.length} {userGroups.length === 1 ? t('group') : t('groups')}
             </Text>
           </View>
           <View style={styles.headerActions}>
@@ -74,9 +76,9 @@ export default function GroupsListScreen() {
         {userGroups.length === 0 ? (
           <View style={styles.emptyState}>
             <Users size={64} color="#CCC" strokeWidth={1.5} />
-            <Text style={styles.emptyTitle}>No Groups Yet</Text>
+            <Text style={styles.emptyTitle}>{t('noGroupsYet')}</Text>
             <Text style={styles.emptySubtitle}>
-              Create your first group to start managing events
+              {t('createFirstGroup')}
             </Text>
             <TouchableOpacity
               style={styles.joinGroupButton}
@@ -84,7 +86,7 @@ export default function GroupsListScreen() {
               activeOpacity={0.7}
             >
               <UserPlus size={20} color="#007AFF" />
-              <Text style={styles.joinGroupButtonText}>Join a Group</Text>
+              <Text style={styles.joinGroupButtonText}>{t('joinAGroup')}</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -109,7 +111,7 @@ export default function GroupsListScreen() {
                     </Text>
                     {isAdmin && (
                       <View style={styles.adminBadge}>
-                        <Text style={styles.adminBadgeText}>Admin</Text>
+                        <Text style={styles.adminBadgeText}>{t('admin')}</Text>
                       </View>
                     )}
                   </View>
@@ -120,7 +122,7 @@ export default function GroupsListScreen() {
                   )}
                   <View style={styles.groupFooter}>
                     <Text style={styles.membersCount}>
-                      {members.length} {members.length === 1 ? 'member' : 'members'}
+                      {members.length} {members.length === 1 ? t('member') : t('members')}
                     </Text>
                   </View>
                 </View>

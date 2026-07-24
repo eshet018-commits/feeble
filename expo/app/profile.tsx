@@ -24,7 +24,8 @@ import {
   type TestNotificationResult,
 } from '@/utils/notifications';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider, updateEmail } from 'firebase/auth';
-import { LogOut, User, Mail, Save, Lock, Key, AtSign, Bell, BellOff, ChevronRight } from 'lucide-react-native';
+import { LogOut, User, Mail, Save, Lock, Key, AtSign, Bell, BellOff, ChevronRight, Globe, Check } from 'lucide-react-native';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -43,15 +44,16 @@ export default function ProfileScreen() {
   const [notifStatus, setNotifStatus] = useState<PermissionStatus>('undetermined');
   const [notifLoading, setNotifLoading] = useState(false);
   const [testNotifLoading, setTestNotifLoading] = useState(false);
+  const { t, language, setLanguage, languages } = useLanguage();
 
   const handleSaveChanges = async () => {
     if (!newName.trim()) {
-      Alert.alert('Error', 'Name cannot be empty');
+      Alert.alert(t('error'), t('nameEmpty'));
       return;
     }
 
     if (!newUserId.trim()) {
-      Alert.alert('Error', 'User ID cannot be empty');
+      Alert.alert(t('error'), t('userIdEmpty'));
       return;
     }
 
@@ -59,10 +61,10 @@ export default function ProfileScreen() {
     try {
       await updateUserName(newName.trim());
       await updateDisplayName(newUserId.trim());
-      Alert.alert('Success', 'Profile updated successfully');
+      Alert.alert(t('success'), t('profileUpdated'));
     } catch (error) {
       console.error('[Profile] Failed to update profile:', error);
-      Alert.alert('Error', 'Failed to update profile');
+      Alert.alert(t('error'), t('profileUpdateFailed'));
     } finally {
       setIsLoading(false);
     }
@@ -269,12 +271,12 @@ export default function ProfileScreen() {
 
   const handleSignOut = async () => {
     Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
+      t('signOut'),
+      t('signOutConfirm'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Sign Out',
+          text: t('signOut'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -284,7 +286,7 @@ export default function ProfileScreen() {
               router.replace('/auth');
             } catch (error) {
               console.error('[Profile] Sign out error:', error);
-              Alert.alert('Error', 'Failed to sign out');
+              Alert.alert(t('error'), t('signOutFailed'));
             }
           },
         },
@@ -299,11 +301,37 @@ export default function ProfileScreen() {
           <View style={styles.avatarContainer}>
             <User size={48} color="#007AFF" strokeWidth={2} />
           </View>
-          <Text style={styles.title}>Profile</Text>
+          <Text style={styles.title}>{t('titleProfile')}</Text>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Notifications</Text>
+          <Text style={styles.sectionTitle}>{t('language')}</Text>
+          <View style={styles.card}>
+            <View style={styles.languageHeader}>
+              <Globe size={20} color="#8E8E93" />
+              <Text style={styles.languageHeaderText}>{t('languageSub')}</Text>
+            </View>
+            {languages.map((lang, index) => (
+              <View key={lang.code}>
+                {index > 0 && <View style={styles.divider} />}
+                <TouchableOpacity
+                  style={styles.languageRow}
+                  onPress={() => setLanguage(lang.code)}
+                  activeOpacity={0.7}
+                >
+                  <View>
+                    <Text style={styles.languageNative}>{lang.nativeName}</Text>
+                    <Text style={styles.languageEnglish}>{lang.englishName}</Text>
+                  </View>
+                  {language === lang.code && <Check size={20} color="#007AFF" />}
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t('notifications')}</Text>
           <TouchableOpacity
             style={styles.card}
             onPress={handleToggleNotifications}
@@ -321,23 +349,23 @@ export default function ProfileScreen() {
               <View style={styles.notifText}>
                 <Text style={styles.label}>
                   {notifStatus === 'granted'
-                    ? 'Notifications Enabled'
+                    ? t('notificationsEnabled')
                     : notifStatus === 'denied'
-                      ? 'Notifications Disabled'
-                      : 'Enable Notifications'}
+                      ? t('notificationsDisabled')
+                      : t('enableNotifications')}
                 </Text>
                 <Text style={styles.notifSubtext}>
                   {notifStatus === 'granted'
-                    ? 'You will receive alerts for messages, announcements, and events.'
+                    ? t('notifGrantedSub')
                     : notifStatus === 'denied'
-                      ? 'Open iOS Settings to allow notifications for this app.'
-                      : 'Tap to allow alerts for messages, announcements, and events.'}
+                      ? t('notifDeniedSub')
+                      : t('notifUndeterminedSub')}
                 </Text>
               </View>
               {notifLoading ? (
                 <ActivityIndicator size="small" color="#007AFF" />
               ) : notifStatus === 'granted' ? (
-                <Text style={styles.notifStatusText}>On</Text>
+                <Text style={styles.notifStatusText}>{t('on')}</Text>
               ) : (
                 <ChevronRight size={20} color="#C7C7CC" />
               )}
@@ -355,26 +383,26 @@ export default function ProfileScreen() {
             ) : (
               <>
                 <Bell size={18} color="#FFFFFF" />
-                <Text style={styles.testNotifButtonText}>Send Test Notification</Text>
+                <Text style={styles.testNotifButtonText}>{t('sendTestNotification')}</Text>
               </>
             )}
           </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account Information</Text>
+          <Text style={styles.sectionTitle}>{t('accountInformation')}</Text>
 
           <View style={styles.card}>
             <View style={styles.fieldContainer}>
               <View style={styles.iconLabel}>
                 <User size={20} color="#8E8E93" />
-                <Text style={styles.label}>Name</Text>
+                <Text style={styles.label}>{t('name')}</Text>
               </View>
               <TextInput
                 style={styles.input}
                 value={newName}
                 onChangeText={setNewName}
-                placeholder="Enter your name"
+                placeholder={t('enterYourName')}
                 editable={!isLoading}
               />
             </View>
@@ -384,13 +412,13 @@ export default function ProfileScreen() {
             <View style={styles.fieldContainer}>
               <View style={styles.iconLabel}>
                 <User size={20} color="#8E8E93" />
-                <Text style={styles.label}>User ID</Text>
+                <Text style={styles.label}>{t('userIdLabel')}</Text>
               </View>
               <TextInput
                 style={styles.input}
                 value={newUserId}
                 onChangeText={setNewUserId}
-                placeholder="Enter your user ID"
+                placeholder={t('enterYourUserId')}
                 editable={!isLoading}
               />
             </View>
@@ -400,7 +428,7 @@ export default function ProfileScreen() {
             <View style={styles.infoRow}>
               <View style={styles.iconLabel}>
                 <Mail size={20} color="#8E8E93" />
-                <Text style={styles.label}>Email</Text>
+                <Text style={styles.label}>{t('email')}</Text>
               </View>
               <Text style={styles.value}>{userEmail}</Text>
             </View>
@@ -417,25 +445,25 @@ export default function ProfileScreen() {
           ) : (
             <>
               <Save size={20} color="#FFFFFF" />
-              <Text style={styles.saveButtonText}>Save Changes</Text>
+              <Text style={styles.saveButtonText}>{t('saveChanges')}</Text>
             </>
           )}
         </TouchableOpacity>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Change Password</Text>
+          <Text style={styles.sectionTitle}>{t('changePassword')}</Text>
 
           <View style={styles.card}>
             <View style={styles.fieldContainer}>
               <View style={styles.iconLabel}>
                 <Lock size={20} color="#8E8E93" />
-                <Text style={styles.label}>Current Password</Text>
+                <Text style={styles.label}>{t('currentPassword')}</Text>
               </View>
               <TextInput
                 style={styles.input}
                 value={currentPassword}
                 onChangeText={setCurrentPassword}
-                placeholder="Enter current password"
+                placeholder={t('enterCurrentPassword')}
                 secureTextEntry
                 autoCapitalize="none"
                 editable={!isChangingPassword}
@@ -447,13 +475,13 @@ export default function ProfileScreen() {
             <View style={styles.fieldContainer}>
               <View style={styles.iconLabel}>
                 <Key size={20} color="#8E8E93" />
-                <Text style={styles.label}>New Password</Text>
+                <Text style={styles.label}>{t('newPassword')}</Text>
               </View>
               <TextInput
                 style={styles.input}
                 value={newPassword}
                 onChangeText={setNewPassword}
-                placeholder="Enter new password (min. 6 characters)"
+                placeholder={t('enterNewPassword')}
                 secureTextEntry
                 autoCapitalize="none"
                 editable={!isChangingPassword}
@@ -465,13 +493,13 @@ export default function ProfileScreen() {
             <View style={styles.fieldContainer}>
               <View style={styles.iconLabel}>
                 <Key size={20} color="#8E8E93" />
-                <Text style={styles.label}>Confirm New Password</Text>
+                <Text style={styles.label}>{t('confirmNewPassword')}</Text>
               </View>
               <TextInput
                 style={styles.input}
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
-                placeholder="Confirm new password"
+                placeholder={t('confirmNewPasswordPh')}
                 secureTextEntry
                 autoCapitalize="none"
                 editable={!isChangingPassword}
@@ -489,26 +517,26 @@ export default function ProfileScreen() {
             ) : (
               <>
                 <Lock size={20} color="#FFFFFF" />
-                <Text style={styles.changePasswordButtonText}>Change Password</Text>
+                <Text style={styles.changePasswordButtonText}>{t('changePassword')}</Text>
               </>
             )}
           </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Change Email</Text>
+          <Text style={styles.sectionTitle}>{t('changeEmail')}</Text>
 
           <View style={styles.card}>
             <View style={styles.fieldContainer}>
               <View style={styles.iconLabel}>
                 <Lock size={20} color="#8E8E93" />
-                <Text style={styles.label}>Current Password</Text>
+                <Text style={styles.label}>{t('currentPassword')}</Text>
               </View>
               <TextInput
                 style={styles.input}
                 value={emailPassword}
                 onChangeText={setEmailPassword}
-                placeholder="Enter current password"
+                placeholder={t('enterCurrentPassword')}
                 secureTextEntry
                 autoCapitalize="none"
                 editable={!isChangingEmail}
@@ -520,13 +548,13 @@ export default function ProfileScreen() {
             <View style={styles.fieldContainer}>
               <View style={styles.iconLabel}>
                 <AtSign size={20} color="#8E8E93" />
-                <Text style={styles.label}>New Email</Text>
+                <Text style={styles.label}>{t('newEmail')}</Text>
               </View>
               <TextInput
                 style={styles.input}
                 value={newEmail}
                 onChangeText={setNewEmail}
-                placeholder="Enter new email address"
+                placeholder={t('enterNewEmail')}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoComplete="email"
@@ -539,13 +567,13 @@ export default function ProfileScreen() {
             <View style={styles.fieldContainer}>
               <View style={styles.iconLabel}>
                 <AtSign size={20} color="#8E8E93" />
-                <Text style={styles.label}>Confirm New Email</Text>
+                <Text style={styles.label}>{t('confirmNewEmail')}</Text>
               </View>
               <TextInput
                 style={styles.input}
                 value={confirmEmail}
                 onChangeText={setConfirmEmail}
-                placeholder="Confirm new email address"
+                placeholder={t('confirmNewEmailPh')}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoComplete="email"
@@ -564,7 +592,7 @@ export default function ProfileScreen() {
             ) : (
               <>
                 <Mail size={20} color="#FFFFFF" />
-                <Text style={styles.changeEmailButtonText}>Change Email</Text>
+                <Text style={styles.changeEmailButtonText}>{t('changeEmail')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -572,7 +600,7 @@ export default function ProfileScreen() {
 
         <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
           <LogOut size={20} color="#FF3B30" />
-          <Text style={styles.signOutText}>Sign Out</Text>
+          <Text style={styles.signOutText}>{t('signOut')}</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -813,5 +841,32 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#34C759',
+  },
+  languageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingBottom: 10,
+  },
+  languageHeaderText: {
+    fontSize: 13,
+    color: '#8E8E93',
+    flex: 1,
+  },
+  languageRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  languageNative: {
+    fontSize: 16,
+    color: '#000000',
+    fontWeight: '500',
+  },
+  languageEnglish: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginTop: 1,
   },
 });

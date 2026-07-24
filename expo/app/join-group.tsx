@@ -14,16 +14,18 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGroups } from '@/contexts/GroupContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function JoinGroupScreen() {
   const router = useRouter();
   const { joinGroupWithCode } = useGroups();
   const [inviteCode, setInviteCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
+  const { t } = useLanguage();
 
   const handleJoinGroup = async () => {
     if (!inviteCode.trim()) {
-      Alert.alert('Error', 'Please enter a group code');
+      Alert.alert(t('error'), t('enterGroupCode'));
       return;
     }
 
@@ -33,11 +35,11 @@ export default function JoinGroupScreen() {
       
       if (result.success) {
         Alert.alert(
-          'Success!',
-          `You've joined ${result.groupName}`,
+          t('success'),
+          `${t('youJoined')} ${result.groupName}`,
           [
             {
-              text: 'View Group',
+              text: t('viewGroup'),
               onPress: () => {
                 router.replace('/');
                 setTimeout(() => {
@@ -48,10 +50,10 @@ export default function JoinGroupScreen() {
           ]
         );
       } else {
-        Alert.alert('Error', result.error || 'Invalid group code');
+        Alert.alert(t('error'), result.error || t('invalidGroupCode'));
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to join group. Please try again.');
+      Alert.alert(t('error'), t('joinFailed'));
       console.error('Join group error:', error);
     } finally {
       setIsJoining(false);
@@ -63,9 +65,9 @@ export default function JoinGroupScreen() {
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.backText}>Cancel</Text>
+            <Text style={styles.backText}>{t('cancel')}</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Join Group</Text>
+          <Text style={styles.headerTitle}>{t('joinGroup')}</Text>
           <View style={styles.placeholder} />
         </View>
       </SafeAreaView>
@@ -85,13 +87,13 @@ export default function JoinGroupScreen() {
               <Users size={48} color="#007AFF" />
             </View>
 
-            <Text style={styles.title}>Join a Group</Text>
+            <Text style={styles.title}>{t('joinGroupTitle')}</Text>
             <Text style={styles.description}>
-              Enter the invite code shared by the group admin to join and view events
+              {t('joinGroupDescription')}
             </Text>
 
             <View style={styles.inputSection}>
-              <Text style={styles.inputLabel}>Group Code</Text>
+              <Text style={styles.inputLabel}>{t('groupCode')}</Text>
               <TextInput
                 style={styles.input}
                 placeholder="e.g., group-abc123..."
@@ -116,14 +118,14 @@ export default function JoinGroupScreen() {
             >
               <UserPlus size={20} color="#FFF" />
               <Text style={styles.joinButtonText}>
-                {isJoining ? 'Joining...' : 'Join Group'}
+                {isJoining ? t('joining') : t('joinGroup')}
               </Text>
             </TouchableOpacity>
 
             <View style={styles.infoBox}>
-              <Text style={styles.infoTitle}>What is a group code?</Text>
+              <Text style={styles.infoTitle}>{t('whatIsGroupCode')}</Text>
               <Text style={styles.infoText}>
-                A group code is a unique identifier that allows you to join a group as a viewer. Ask the group admin to share their code with you.
+                {t('groupCodeInfo')}
               </Text>
             </View>
           </View>

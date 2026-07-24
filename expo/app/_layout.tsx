@@ -10,6 +10,7 @@ import { OnboardingProvider } from "@/contexts/OnboardingContext";
 import { ChatProvider } from "@/contexts/ChatContext";
 import { AnnouncementProvider } from "@/contexts/AnnouncementContext";
 import { NotificationProvider, NotificationBannerOverlay } from "@/contexts/NotificationContext";
+import { LanguageProvider, useLanguage } from "@/contexts/LanguageContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { trpc, trpcClient } from "@/lib/trpc";
 import {
@@ -134,15 +135,16 @@ function NotificationBootstrap() {
 }
 
 function RootLayoutNav() {
+  const { t } = useLanguage();
   return (
-    <Stack screenOptions={{ headerBackTitle: "Back" }}>
+    <Stack screenOptions={{ headerBackTitle: t('back') }}>
       <Stack.Screen name="auth" options={{ headerShown: false }} />
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen 
         name="group/[id]/index" 
         options={{ 
           headerShown: true,
-          title: "Group",
+          title: t('titleGroup'),
           presentation: "card"
         }} 
       />
@@ -157,7 +159,7 @@ function RootLayoutNav() {
         name="group/[id]/create-event" 
         options={{ 
           headerShown: true,
-          title: "New Event",
+          title: t('titleNewEvent'),
           presentation: "modal"
         }} 
       />
@@ -165,7 +167,7 @@ function RootLayoutNav() {
         name="event/[id]" 
         options={{ 
           headerShown: true,
-          title: "Event Details",
+          title: t('titleEventDetails'),
           presentation: "card"
         }} 
       />
@@ -173,7 +175,7 @@ function RootLayoutNav() {
         name="event/[id]/edit" 
         options={{ 
           headerShown: true,
-          title: "Edit Event",
+          title: t('titleEditEvent'),
           presentation: "card"
         }} 
       />
@@ -188,7 +190,7 @@ function RootLayoutNav() {
         name="profile" 
         options={{ 
           headerShown: true,
-          title: "Profile",
+          title: t('titleProfile'),
           presentation: "card"
         }} 
       />
@@ -196,7 +198,7 @@ function RootLayoutNav() {
         name="role-selection" 
         options={{ 
           headerShown: true,
-          title: "Select Role",
+          title: t('titleSelectRole'),
           presentation: "modal"
         }} 
       />
@@ -204,7 +206,7 @@ function RootLayoutNav() {
         name="create-event" 
         options={{ 
           headerShown: true,
-          title: "Create Event",
+          title: t('titleCreateEvent'),
           presentation: "modal"
         }} 
       />
@@ -219,7 +221,7 @@ function RootLayoutNav() {
         name="group/[id]/settings" 
         options={{ 
           headerShown: true,
-          title: "Group Settings",
+          title: t('titleGroupSettings'),
           presentation: "card"
         }} 
       />
@@ -227,7 +229,7 @@ function RootLayoutNav() {
         name="help" 
         options={{ 
           headerShown: true,
-          title: "Help",
+          title: t('titleHelp'),
           presentation: "card"
         }} 
       />
@@ -235,7 +237,7 @@ function RootLayoutNav() {
         name="group/[id]/chats" 
         options={{ 
           headerShown: true,
-          title: "Chats",
+          title: t('titleChats'),
           presentation: "card"
         }} 
       />
@@ -243,7 +245,7 @@ function RootLayoutNav() {
         name="group/[id]/chat/[chatId]" 
         options={{ 
           headerShown: true,
-          title: "Chat",
+          title: t('titleChat'),
           presentation: "card"
         }} 
       />
@@ -251,7 +253,7 @@ function RootLayoutNav() {
         name="group/[id]/create-announcement" 
         options={{ 
           headerShown: true,
-          title: "New Announcement",
+          title: t('titleNewAnnouncement'),
           presentation: "modal"
         }} 
       />
@@ -275,6 +277,7 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <GestureHandlerRootView style={{ flex: 1 }}>
           <SafeAreaProvider>
+            <LanguageProvider>
             <NotificationProvider>
               <UserProvider>
                 <OnboardingProvider>
@@ -293,6 +296,7 @@ export default function RootLayout() {
               </UserProvider>
               <NotificationBannerOverlay />
             </NotificationProvider>
+            </LanguageProvider>
           </SafeAreaProvider>
         </GestureHandlerRootView>
       </QueryClientProvider>

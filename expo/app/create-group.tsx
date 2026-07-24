@@ -14,17 +14,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGroups } from '@/contexts/GroupContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 export default function CreateGroupScreen() {
   const router = useRouter();
   const { createGroup } = useGroups();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const { t } = useLanguage();
 
 
   const handleCreate = async () => {
     if (!name.trim()) {
-      Alert.alert('Error', 'Please enter a group name');
+      Alert.alert(t('error'), t('enterGroupNameError'));
       return;
     }
 
@@ -47,7 +49,7 @@ export default function CreateGroupScreen() {
     } catch (error: any) {
       console.error('[CreateGroup] Error creating group:', error);
       const errorMessage = error?.message || error?.toString() || 'Unknown error';
-      Alert.alert('Error', `Failed to create group: ${errorMessage}`);
+      Alert.alert(t('error'), `${t('createGroupFailed')}: ${errorMessage}`);
     } finally {
       setIsCreating(false);
     }
@@ -61,9 +63,9 @@ export default function CreateGroupScreen() {
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.cancelButton}>
-            <Text style={styles.cancelText}>Cancel</Text>
+            <Text style={styles.cancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>New Group</Text>
+          <Text style={styles.headerTitle}>{t('newGroup')}</Text>
           <TouchableOpacity
             onPress={handleCreate}
             disabled={!name.trim() || isCreating}
@@ -78,7 +80,7 @@ export default function CreateGroupScreen() {
                   !name.trim() && styles.createTextDisabled,
                 ]}
               >
-                Create
+                {t('create')}
               </Text>
             )}
           </TouchableOpacity>
@@ -87,10 +89,10 @@ export default function CreateGroupScreen() {
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.section}>
-          <Text style={styles.label}>Group Name *</Text>
+          <Text style={styles.label}>{t('groupName')} *</Text>
           <TextInput
             style={styles.input}
-            placeholder="Enter group name"
+            placeholder={t('enterGroupName')}
             placeholderTextColor="#999"
             value={name}
             onChangeText={setName}
@@ -100,10 +102,10 @@ export default function CreateGroupScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.label}>Description (Optional)</Text>
+          <Text style={styles.label}>{t('descriptionOptional')}</Text>
           <TextInput
             style={[styles.input, styles.textArea]}
-            placeholder="What is this group for?"
+            placeholder={t('whatIsGroupFor')}
             placeholderTextColor="#999"
             value={description}
             onChangeText={setDescription}
@@ -115,16 +117,10 @@ export default function CreateGroupScreen() {
         </View>
 
         <View style={styles.infoSection}>
-          <Text style={styles.infoTitle}>About Groups</Text>
-          <Text style={styles.infoText}>
-            • As the admin, you can create and manage events in this group
-          </Text>
-          <Text style={styles.infoText}>
-            • Invite members to view events and receive notifications
-          </Text>
-          <Text style={styles.infoText}>
-            • Only admins can create, edit, or delete events
-          </Text>
+          <Text style={styles.infoTitle}>{t('aboutGroups')}</Text>
+          <Text style={styles.infoText}>{t('aboutGroups1')}</Text>
+          <Text style={styles.infoText}>{t('aboutGroups2')}</Text>
+          <Text style={styles.infoText}>{t('aboutGroups3')}</Text>
         </View>
 
 
